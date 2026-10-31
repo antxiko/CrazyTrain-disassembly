@@ -165,17 +165,17 @@ L_006D:
 	call explosion		;0077
 	jr L_00D8		;007a   ; y el cuadro se acaba aqui
 L_007C:
-	ld hl,0e063h		;007c   ; la cuenta de paso del tren blanco
+	ld hl,0e063h		;007c   ; la cuenta del tren blanco: un pixel cada tantos cuadros como diga la velocidad
 	dec (hl)			;007f
 	jr nz,mueve_negros		;0080   ; aun no le toca moverse
 	dec hl			;0082
 	ld a,(hl)			;0083   ; la velocidad...
 	inc hl			;0084
 	ld (hl),a			;0085   ; ...recarga la cuenta
-	ld a,(0e305h)		;0086   ; en la mitad de una pieza curva (paso 4 o mas)...
+	ld a,(0e305h)		;0086   ; en diagonal (direccion del sprite 4-7)...
 	cp 004h		;0089
 	jr c,mueve_tren_blanco		;008b
-	ld a,(hl)			;008d   ; ...va mas despacio: un cuadro mas...
+	ld a,(hl)			;008d   ; ...va mas despacio: un cuadro mas por pixel...
 	inc (hl)			;008e
 	cp 003h		;008f   ; ...y con la velocidad 3 o mas, otro
 	jr c,mueve_tren_blanco		;0091
@@ -183,9 +183,9 @@ L_007C:
 mueve_tren_blanco:		; Un paso del tren blanco: su guion (0x0843)
 	ld hl,0e306h		;0094   ; la cuenta del guion del tren blanco
 	call paso_de_tren		;0097
-mueve_negros:		; Los tres trenes negros: los que estan en marcha, un paso cada tres cuadros (cuatro en las curvas)
+mueve_negros:		; Los tres trenes negros: los que estan en marcha, un pixel cada tres cuadros (cuatro en diagonal)
 	ld hl,0e067h		;009a   ; en marcha
-	ld de,0e325h		;009d   ; su paso dentro de la pieza (+5 de su ficha)
+	ld de,0e325h		;009d   ; la direccion de su sprite (+5 de su ficha)
 	ld b,003h		;00a0   ; tres trenes
 L_00A2:
 	push hl			;00a2
@@ -200,7 +200,7 @@ L_00A2:
 	dec (hl)			;00ac   ; aun no le toca
 	jr nz,L_00BC		;00ad
 	ld (hl),003h		;00af   ; se recarga: tres cuadros...
-	ld a,(de)			;00b1   ; ...en la segunda mitad de la pieza...
+	ld a,(de)			;00b1   ; ...en diagonal...
 	cp 004h		;00b2
 	jr c,L_00B7		;00b4
 	inc (hl)			;00b6   ; ...cuatro
@@ -571,7 +571,7 @@ L_030C:
 ; UNA FASE NUEVA del jugador en curso: su tablero y sus trenes desde la reserva, la fase uno mas, el hueco en su sitio de salida y las estaciones por visitar.
 ; ----------------------------------------------------------------------
 fase_nueva:		; Empieza una fase: tablero, trenes, fase, hueco y estaciones
-	call prepara_tablero_jugador		;0313   ; el tablero (y en la fase 4 en adelante, revuelto)
+	call prepara_tablero_jugador		;0313   ; el tablero (desde la fase 4, revuelto con el numero de la anterior)
 	call saca_trenes		;0316   ; las fichas de los trenes, de la reserva del jugador
 	ld hl,0e008h		;0319   ; sin toques
 	rst 30h			;031c
@@ -1400,7 +1400,7 @@ salta_hl:		; jp (hl): al codigo de la ficha o al trocito de 0x0AE0
 
 ; ----------------------------------------------------------------------
 ; DATOS ret_suelto_084F: 0xC9 (ret) suelto detras del jp (hl): nadie salta
-;   aqui
+;   aqui (tools/sonda_ret.tcl: 0 veces en 20.000 cuadros de partida)
 ;   0x084f..0x0850  (1 bytes)
 DATA_ret_suelto_084F:
 	defb 0c9h	; 084f
@@ -1747,10 +1747,10 @@ lado_estacion:		; El lado de la estacion: 0 abajo (fila 5), 1 izquierda, 2 arrib
 	ld b,003h		;0a11
 	ret			;0a13
 cierra_estacion:		; La estacion de HL (pieza, casilla, casilla) se cierra: sus dos casillas pasan a la pieza 8-11 (las cruces) y se pintan
-	ld a,(hl)			;0a14   ; la pieza de estacion: su lado...
+	ld a,(hl)			;0a14   ; la pieza de estacion (0-7) / 2...
 	and 006h		;0a15
 	rrca			;0a17
-	or 008h		;0a18   ; ...8 + el lado
+	or 008h		;0a18   ; ...+ 8: 8 arriba, 9 derecha, 10 abajo, 11 izquierda
 	ld c,a			;0a1a
 	inc hl			;0a1b
 	ld a,(hl)			;0a1c   ; la primera casilla
@@ -2023,14 +2023,14 @@ fila_4x4:		; Una fila de cuatro letras
 	jr fila_4x4		;0b58   ; la fila siguiente
 
 ; ----------------------------------------------------------------------
-; EL TABLERO REVUELTO, desde el cuarto tablero: el interior (6 x 4 casillas) sale de la tira de 0x126B, empezando en un sitio que depende de la fase; el hueco en la casilla 12 y un cruce en la 28; y segun la fase, de 6 a 8 casillas pasan a ser vias rectas (la pieza 0x14) en los sitios de 0x127E.
+; EL TABLERO REVUELTO, desde el cuarto tablero: el interior (6 x 4 casillas) sale de la tira de 0x126B, empezando en un sitio que depende de N; el hueco en la casilla 12 y un cruce en la 28; y segun N, de 2 a 8 casillas pasan a ser vias rectas (la pieza 0x14) en los sitios de 0x127E. N es el numero de la fase ANTERIOR: 0x0313 llama aqui antes de que 0x0320 suba 0xE230 (en la fase 4, N = 3).
 ; ----------------------------------------------------------------------
 tablero_revuelto:		; El interior del cuarto tablero, revuelto segun la fase
-	ld hl,0e230h		;0b5a   ; la fase
+	ld hl,0e230h		;0b5a   ; N, la fase anterior
 	rst 30h			;0b5d
 	rst 10h			;0b5e
 	ld a,(hl)			;0b5f
-fase_a_16:		; La fase (BCD), de 1 a 16
+fase_a_16:		; N (BCD), de 1 a 16
 	cp 011h		;0b60
 	jr c,empieza_tira		;0b62
 	sub 010h		;0b64
@@ -2068,26 +2068,26 @@ L_0B91:
 	ld a,010h		;0b93   ; y la 28...
 	rst 10h			;0b95
 	ld (hl),00eh		;0b96   ; ...un cruce
-	ld hl,0e230h		;0b98   ; la fase
+	ld hl,0e230h		;0b98   ; N
 	rst 30h			;0b9b
 	rst 10h			;0b9c
 	ld a,(hl)			;0b9d
-	cp 011h		;0b9e   ; de la 11 en adelante:...
+	cp 011h		;0b9e   ; N de 11 en adelante:...
 	jr c,fase_baja		;0ba0
-	ld b,008h		;0ba2   ; ...8 rectas desde la 20...
+	ld b,008h		;0ba2   ; ...8 rectas desde 20...
 	cp 020h		;0ba4
 	jr nc,fase_a_16b		;0ba6
-	ld b,007h		;0ba8   ; ...7 desde la 14...
+	ld b,007h		;0ba8   ; ...7 desde 14...
 	cp 014h		;0baa
 	jr nc,fase_a_16b		;0bac
-	ld b,006h		;0bae   ; ...6 hasta la 13
+	ld b,006h		;0bae   ; ...6 hasta 13
 fase_a_16b:		; Menos 16, hasta quedar por debajo
 	cp 010h		;0bb0
 	jr c,pon_rectas		;0bb2
 	sub 010h		;0bb4
 	jr fase_a_16b		;0bb6
-fase_baja:		; Hasta la 10: tantas rectas como la fase - 1, con 6 como mucho
-	dec a			;0bb8   ; la fase - 1
+fase_baja:		; N hasta 10: N - 1 rectas, 6 como mucho
+	dec a			;0bb8   ; N - 1
 	ld b,006h		;0bb9
 	cp 007h		;0bbb
 	jr nc,pon_rectas		;0bbd
@@ -2170,7 +2170,7 @@ pinta_cifras:		; Cuatro cifras BCD de HL en DE; con los puntos de un jugador, mi
 	jr nc,cifras_a_vram		;0c29
 	ld hl,00005h		;0c2b   ; la primera a los 5000...
 	or a			;0c2e
-	ld b,a			;0c2f   ; ...si aun no lleva ninguna
+	ld b,a			;0c2f   ; ...si aun no lleva ninguna (B, desde aqui, las vidas dadas)
 	jr z,mira_vida_extra		;0c30
 	xor a			;0c32
 umbral_vida:		; La siguiente cada 30000: 30000, 60000, 90000
@@ -2178,11 +2178,11 @@ umbral_vida:		; La siguiente cada 30000: 30000, 60000, 90000
 	daa			;0c35
 	djnz umbral_vida		;0c36
 	ld l,a			;0c38
-mira_vida_extra:		; Los puntos tienen que ser EXACTAMENTE el umbral (las decenas y centenas a cero)
+mira_vida_extra:		; Solo cuentan los millares (C): B ya no son las decenas: 0x0C2F ha puesto en B las vidas dadas (y el djnz lo deja a cero). Como los millares suben de uno en uno, la vida extra no se salta nunca
 	or a			;0c39
-	sbc hl,bc		;0c3a   ; puntos menos umbral
+	sbc hl,bc		;0c3a   ; H y L (0, el umbral) contra B y C (0, los millares)
 	ex de,hl			;0c3c
-	jr nz,cifras_a_vram		;0c3d   ; no son iguales
+	jr nz,cifras_a_vram		;0c3d   ; otros millares
 	inc (hl)			;0c3f   ; una vida extra dada
 	ld hl,0e002h		;0c40   ; una vida mas
 	rst 30h			;0c43
@@ -3169,8 +3169,8 @@ DATA_tablero3:
 	defb 013h,00ah,004h,005h,004h,005h,012h,00fh	; 1233  ........
 
 ; ----------------------------------------------------------------------
-; DATOS tablero4: el interior de 6 x 4 y el marco entero; desde aqui, el
-;   interior lo revuelve 0x0B5A
+; DATOS tablero4: el interior de 6 x 4 y el marco entero; el interior no se ve
+;   nunca: desde la fase 4 lo revuelve siempre 0x0B5A
 ;   0x123b..0x126b  (48 bytes)
 DATA_tablero4:
 	defb 010h,000h,001h,000h,001h,000h,001h,011h	; 123b  ........

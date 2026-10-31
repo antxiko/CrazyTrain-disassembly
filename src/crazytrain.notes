@@ -114,24 +114,24 @@ C 0x0053 el segundo
 C 0x0060 el tercero
 C 0x006D y el blanco: ha chocado?
 C 0x0074 su explosion, y nada mas este cuadro
-C 0x007C la cuenta de paso del tren blanco
+C 0x007C la cuenta del tren blanco: un pixel cada tantos cuadros como diga la velocidad
 C 0x0080 aun no le toca moverse
 C 0x0083 la velocidad...
 C 0x0085 ...recarga la cuenta
-C 0x0086 en la mitad de una pieza curva (paso 4 o mas)...
-C 0x008D ...va mas despacio: un cuadro mas...
+C 0x0086 en diagonal (direccion del sprite 4-7)...
+C 0x008D ...va mas despacio: un cuadro mas por pixel...
 C 0x008F ...y con la velocidad 3 o mas, otro
 L 0x0094 mueve_tren_blanco         Un paso del tren blanco: su guion (0x0843)
 C 0x0094 la cuenta del guion del tren blanco
-L 0x009A mueve_negros              Los tres trenes negros: los que estan en marcha, un paso cada tres cuadros (cuatro en las curvas)
+L 0x009A mueve_negros              Los tres trenes negros: los que estan en marcha, un pixel cada tres cuadros (cuatro en diagonal)
 C 0x009A en marcha
-C 0x009D su paso dentro de la pieza (+5 de su ficha)
+C 0x009D la direccion de su sprite (+5 de su ficha)
 C 0x00A0 tres trenes
 C 0x00A7 este no esta
 C 0x00A9 su cuenta de paso (0xE064-0xE066)
 C 0x00AC aun no le toca
 C 0x00AF se recarga: tres cuadros...
-C 0x00B1 ...en la segunda mitad de la pieza...
+C 0x00B1 ...en diagonal...
 C 0x00B6 ...cuatro
 C 0x00B7 la cuenta de su guion (+6)
 C 0x00B9 un paso del guion
@@ -313,7 +313,7 @@ C 0x0306 ...o con un jugador...
 C 0x030C ...se borra el marcador del 2P
 B 0x0313 UNA FASE NUEVA del jugador en curso: su tablero y sus trenes desde la reserva, la fase uno mas, el hueco en su sitio de salida y las estaciones por visitar.
 L 0x0313 fase_nueva                Empieza una fase: tablero, trenes, fase, hueco y estaciones
-C 0x0313 el tablero (y en la fase 4 en adelante, revuelto)
+C 0x0313 el tablero (desde la fase 4, revuelto con el numero de la anterior)
 C 0x0316 las fichas de los trenes, de la reserva del jugador
 C 0x0319 sin toques
 C 0x0320 la fase...
@@ -663,7 +663,7 @@ C 0x0846 el puntero al guion...
 C 0x084A ...a IX
 C 0x084D al codigo de la ficha (+9): lee el byte (IX + n), suma uno a n y salta a 0x0850
 L 0x084E salta_hl                  jp (hl): al codigo de la ficha o al trocito de 0x0AE0
-D 0x084F 0x0850 ret_suelto_084F  0xC9 (ret) suelto detras del jp (hl): nadie salta aqui
+D 0x084F 0x0850 ret_suelto_084F  0xC9 (ret) suelto detras del jp (hl): nadie salta aqui (tools/sonda_ret.tcl: 0 veces en 20.000 cuadros de partida)
 B 0x0850 EL BYTE DEL GUION (A), que trae el codigo de la ficha: 0xFF acaba la casilla (0x0E61), 0x10 es un callejon sin salida (el tren choca) y lo demas, "veces x 16 + direccion".
 L 0x0850 byte_de_guion             Lo que dice el byte del guion
 C 0x0850 0xFF: fin de la casilla
@@ -885,10 +885,10 @@ L 0x0B46 fila_4x4                  Una fila de cuatro letras
 C 0x0B4B la fila de abajo
 C 0x0B50 se sale de la tabla de nombres (0x3B00)?
 C 0x0B56 cuatro filas
-B 0x0B5A EL TABLERO REVUELTO, desde el cuarto tablero: el interior (6 x 4 casillas) sale de la tira de 0x126B, empezando en un sitio que depende de la fase; el hueco en la casilla 12 y un cruce en la 28; y segun la fase, de 6 a 8 casillas pasan a ser vias rectas (la pieza 0x14) en los sitios de 0x127E.
+B 0x0B5A EL TABLERO REVUELTO, desde el cuarto tablero: el interior (6 x 4 casillas) sale de la tira de 0x126B, empezando en un sitio que depende de N; el hueco en la casilla 12 y un cruce en la 28; y segun N, de 2 a 8 casillas pasan a ser vias rectas (la pieza 0x14) en los sitios de 0x127E. N es el numero de la fase ANTERIOR: 0x0313 llama aqui antes de que 0x0320 suba 0xE230 (en la fase 4, N = 3).
 L 0x0B5A tablero_revuelto          El interior del cuarto tablero, revuelto segun la fase
-C 0x0B5A la fase
-L 0x0B60 fase_a_16                 La fase (BCD), de 1 a 16
+C 0x0B5A N, la fase anterior
+L 0x0B60 fase_a_16                 N (BCD), de 1 a 16
 L 0x0B68 empieza_tira              Desde ese sitio de la tira
 C 0x0B6D la casilla 9: fila 1, columna 1
 L 0x0B6F casilla_de_tira           Una casilla del interior
@@ -904,14 +904,14 @@ C 0x0B89 la casilla 12...
 C 0x0B91 ...es el hueco
 C 0x0B93 y la 28...
 C 0x0B96 ...un cruce
-C 0x0B98 la fase
-C 0x0B9E de la 11 en adelante:...
-C 0x0BA2 ...8 rectas desde la 20...
-C 0x0BA8 ...7 desde la 14...
-C 0x0BAE ...6 hasta la 13
+C 0x0B98 N
+C 0x0B9E N de 11 en adelante:...
+C 0x0BA2 ...8 rectas desde 20...
+C 0x0BA8 ...7 desde 14...
+C 0x0BAE ...6 hasta 13
 L 0x0BB0 fase_a_16b                Menos 16, hasta quedar por debajo
-L 0x0BB8 fase_baja                 Hasta la 10: tantas rectas como la fase - 1, con 6 como mucho
-C 0x0BB8 la fase - 1
+L 0x0BB8 fase_baja                 N hasta 10: N - 1 rectas, 6 como mucho
+C 0x0BB8 N - 1
 L 0x0BC0 pon_rectas                Las B rectas, desde ese sitio de la lista de 0x127E
 L 0x0BC4 pon_recta                 Una recta
 C 0x0BC4 la casilla
@@ -945,11 +945,11 @@ C 0x0C1B es el record?
 C 0x0C20 las vidas extra que lleva el jugador
 C 0x0C27 cuatro ya: no hay mas
 C 0x0C2B la primera a los 5000...
-C 0x0C2F ...si aun no lleva ninguna
+C 0x0C2F ...si aun no lleva ninguna (B, desde aqui, las vidas dadas)
 L 0x0C33 umbral_vida               La siguiente cada 30000: 30000, 60000, 90000
-L 0x0C39 mira_vida_extra           Los puntos tienen que ser EXACTAMENTE el umbral (las decenas y centenas a cero)
-C 0x0C3A puntos menos umbral
-C 0x0C3D no son iguales
+L 0x0C39 mira_vida_extra           Solo cuentan los millares (C): B ya no son las decenas: 0x0C2F ha puesto en B las vidas dadas (y el djnz lo deja a cero). Como los millares suben de uno en uno, la vida extra no se salta nunca
+C 0x0C3A H y L (0, el umbral) contra B y C (0, los millares)
+C 0x0C3D otros millares
 C 0x0C3F una vida extra dada
 C 0x0C40 una vida mas
 C 0x0C46 las vidas en pantalla
@@ -1483,7 +1483,7 @@ D 0x11DB 0x120B tablero2  el interior de 4 x 4
 F 0x11DB 8
 D 0x120B 0x123B tablero3  el interior de 5 x 4, con una recta (0x14) en la casilla 19
 F 0x120B 8
-D 0x123B 0x126B tablero4  el interior de 6 x 4 y el marco entero; desde aqui, el interior lo revuelve 0x0B5A
+D 0x123B 0x126B tablero4  el interior de 6 x 4 y el marco entero; el interior no se ve nunca: desde la fase 4 lo revuelve siempre 0x0B5A
 F 0x123B 8
 D 0x126B 0x127E tira_revuelta  18 piezas (0x0C, 0x0D, 0x0E) y un cero: el interior del cuarto tablero sale de aqui, desde un sitio que depende de la fase (0x0B5A)
 D 0x127E 0x1293 sitios_de_rectas  las casillas que pasan a ser rectas en los tableros revueltos, de 6 a 8 desde un sitio que depende de la fase (0x0BC0)
