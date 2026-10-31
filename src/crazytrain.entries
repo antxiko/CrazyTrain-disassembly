@@ -1,0 +1,28 @@
+# Puntos de entrada que el trazado NO puede deducir solo.
+#
+# Cada uno lleva escrito POR QUE hace falta. Una entrada sin justificar es una
+# direccion metida a mano para que la cobertura cuadre.
+
+# El arranque: la cabecera del cartucho da INIT en 0x0160, y la BIOS lo llama
+# con CALSLT, que pone ESTE cartucho en la pagina 0.
+0x0160   # INIT
+
+# Con el cartucho en la pagina 0, la interrupcion del VDP salta a 0x0038, que
+# es de este programa y no de la BIOS.
+0x0038   # la interrupcion
+
+# Cada actor lleva en su ficha de RAM (la plantilla de 0x12B7, copiada a
+# 0xE400/0xE480 y de ahi a 0xE300) un trozo de codigo que 0x0843 ejecuta con
+# `jp (hl)`: "ld b,(ix+n) / ... / jp 0x0850". El trazado no entra en la RAM.
+0x0850   # el `jp 0x0850` de la plantilla de 0x12B7 (byte 0x12CA)
+
+# 0x08D5 llama a 0x084E (`jp (hl)`) con HL = 0x0AE0 + 3 x la direccion: ocho
+# trocitos de 3 bytes que mueven D y E un paso (dec d, inc d, inc e, ...; ret).
+0x0AE0   # direccion 0
+0x0AE3   # direccion 1
+0x0AE6   # direccion 2
+0x0AE9   # direccion 3
+0x0AEC   # direccion 4
+0x0AEF   # direccion 5
+0x0AF2   # direccion 6
+0x0AF5   # direccion 7

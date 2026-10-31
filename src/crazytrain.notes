@@ -1,0 +1,1570 @@
+# ======================================================================
+# CRAZY TRAIN (Konami para Sony, 1983) - anotaciones del desensamblado
+# ======================================================================
+# Formato: ver la cabecera de tools/mkasm.py.
+#
+# EL CARTUCHO: 8 KB que el volcado repite cuatro veces (32 KB, las cuatro
+# copias identicas: lo comprueba `make verify`). El programa esta escrito para
+# la PAGINA 0: la cabecera da INIT en 0x0160, la BIOS lo llama con CALSLT -que
+# pone el cartucho en la pagina de la direccion a la que salta- y desde ahi el
+# juego no vuelve a la BIOS nunca. Sus RST y su interrupcion (0x0038) son
+# suyos, y el VDP, el PSG y el teclado se manejan con OUT/IN directos.
+#
+# EL JUEGO: un puzle de piezas deslizantes con un tren encima. El tablero son
+# 8 x 6 casillas de 4 x 4 letras (0xE100, 48 bytes por jugador); dentro del
+# marco hay un hueco (la casilla 0x0F) y el mando empuja hacia el la pieza de
+# al lado. El tren blanco (el sprite 0) avanza solo por las vias; si llega a
+# una pieza sin salida, o choca con un tren negro, se pierde una vida. Las
+# estaciones del marco hay que visitarlas todas para pasar de fase.
+#
+# LA PANTALLA: SCREEN 2 con la tabla de colores en 0x0000 y la de patrones en
+# 0x2000 (los registros de 0x1346); el tablero se pinta en la tabla de nombres
+# (0x3800) y los trenes son sprites de 16 x 16 (atributos en 0x3B00).
+#
+# LOS ACTORES: cuatro fichas de 32 bytes en 0xE300 (el tren blanco) y 0xE320,
+# 0xE340, 0xE360 (los trenes negros), copiadas de la plantilla de 0x12B7. Cada
+# ficha lleva DENTRO un trozo de codigo (desde +9) que 0x0843 ejecuta con
+# `jp (hl)`: lee el byte siguiente de su guion (IX + n) y se suma uno a la n,
+# modificandose a si mismo. Por eso hay codigo al que no salta nadie desde la
+# ROM: 0x0850 y lo que sigue.
+#
+# LA RAM, lo que se lee en el listado (p = el jugador en curso, 0xE001):
+#   0xE000 dos jugadores  0xE001 el jugador en curso (0/1)
+#   0xE002/0xE003 vidas de cada jugador  0xE005 el tren ha chocado
+#   0xE006/0xE007 donde esta el hueco de cada jugador (fila x 8 + columna)
+#   0xE008/0xE009 el tren blanco tiene que salir otra vez desde su casilla
+#   0xE030-0xE03D la pieza que se desliza: 0xE030 su sitio en la VRAM,
+#     0xE032 su paso, 0xE034 la pieza, 0xE035 de donde sale, 0xE036 el hueco,
+#     0xE037 el hueco en la VRAM, 0xE039 los pasos que faltan, 0xE03A
+#     deslizando, 0xE03B la direccion, 0xE03C/0xE03D lo que se mueve el sprite
+#   0xE040 el tren blanco acaba de cerrar una estacion  0xE041 casillas de
+#     estacion pisadas  0xE042-0xE044 su pieza y sus dos casillas
+#   0xE045/0xE046 estaciones que faltan por visitar
+#   0xE050-0xE052 la estacion que cierra un choque  0xE058/0xE059 las dos
+#     casillas de la ultima estacion cerrada
+#   0xE05A el tablero ha cambiado  0xE060-0xE062 la velocidad del tren
+#   0xE063-0xE066 las cuentas de paso de los cuatro trenes
+#   0xE067-0xE069 los trenes negros en marcha  0xE06A-0xE06C los que estallan
+#   0xE080-0xE08F los cuatro sprites del jugador 1 (0xE090 los del 2)
+#   0xE0FC el mando (1) o el teclado (0)
+#   0xE100-0xE12F el tablero del jugador 1 (0xE130 el del 2)
+#   0xE160-0xE16F las estaciones del jugador 1 (0 = por visitar; 0xE170 el 2)
+#   0xE180-0xE183 el tren de cada ficha esta en la pieza que se desliza
+#   0xE1A0-0xE1AA el camino del tren por adelantado (0xE1AA: da vueltas)
+#   0xE1B0/0xE1B1 el tablero de cada jugador (0-3)  0xE1B2 la primera fase
+#   0xE1C0-0xE1C3 donde estaba el tren al perder la vida
+#   0xE1E0 la espera en tramos de 32 cuadros  0xE1E1 la cuenta de cuadros
+#   0xE200 la interrupcion solo toca musica  0xE202-0xE20E las explosiones
+#   0xE210/0xE212 los puntos (BCD)  0xE214 el record  0xE216 vidas extra dadas
+#   0xE218-0xE223 tampon de cifras  0xE230/0xE231 la fase (BCD)
+#   0xE240 casillas hasta el aviso del tren negro  0xE241 hay aviso
+#   0xE242/0xE243 su divisor y su cuenta (BCD)  0xE244-0xE249 sus tres cifras
+#     en la VRAM  0xE24A lo que tapaban  0xE24B-0xE24E su estacion
+#   0xE0FE/0xE0FF el parpadeo del rotulo  0xE250/0xE251 el cuadro ha
+#   pasado (para el bucle)  0xE260 la demostracion  0xE261/0xE262 su mando
+#   0xE270 el tablero ya ha cambiado de color
+#   0xE300-0xE37F las cuatro fichas de los trenes (0xE400 y 0xE480 de reserva
+#   para cada jugador)  0xE3A0-0xE3B7 los tres canales de musica
+
+# ======================================================================
+# LA CABECERA Y LOS RST
+# ======================================================================
+D 0x0000 0x0010 cabecera_del_cartucho  "AB" y la direccion de INIT (0x0160), en la pagina 0; STATEMENT, DEVICE y TEXT a cero
+F 0x0000 2,w,12
+B 0x0010 RST 10h: HL = HL + A
+L 0x0010 rst_suma_hl               RST 10h: HL + A
+C 0x0010 el byte bajo
+C 0x0012 sin acarreo, ya esta
+C 0x0013 con acarreo, el alto
+D 0x0015 0x0018 relleno_0015  0xFF x 3, hasta el RST siguiente
+B 0x0018 RST 18h: la direccion DE al VDP (con el bit 6 de D, para escribir; con el 7, un registro)
+L 0x0018 rst_vdp_direccion         RST 18h: DE al puerto 0x99
+C 0x0018 el byte bajo
+C 0x001B y el alto
+D 0x001F 0x0020 relleno_001F  0xFF
+B 0x0020 RST 20h: B bytes de HL a la VRAM, en la direccion DE
+L 0x0020 rst_copia_vram            RST 20h: B bytes de HL a la VRAM en DE
+C 0x0020 la direccion
+L 0x0021 copia_vram                B bytes de HL a la VRAM, en la direccion ya puesta
+C 0x0021 un byte
+C 0x0024 el siguiente
+B 0x0028 RST 28h: B bytes con el valor C en la VRAM, desde DE
+L 0x0028 rst_rellena_vram          RST 28h: B veces C en la VRAM desde DE
+C 0x0028 la direccion
+L 0x0029 rellena_vram              B veces C, en la direccion ya puesta
+L 0x002A rellena_vram_a            B veces A, en la direccion ya puesta
+C 0x002A un byte
+C 0x002C el VDP necesita su tiempo
+B 0x0030 RST 30h: el jugador en curso, en A y en la bandera Z (Z: el 1)
+L 0x0030 rst_jugador               RST 30h: A = el jugador en curso (0 o 1), Z si es el 1
+C 0x0030 0 o 1
+D 0x0035 0x0038 relleno_0035  0xFF x 3
+
+# ======================================================================
+# LA INTERRUPCION
+# ======================================================================
+B 0x0038 LA INTERRUPCION DEL VDP, una vez por cuadro: las explosiones, el paso de los cuatro trenes, la pieza que se desliza, la musica y los relojes. Con 0xE200 a 1 solo la musica y los relojes.
+L 0x0038 interrupcion              El cuadro: trenes, mando, musica y relojes
+C 0x0038 se guarda lo que se toca
+C 0x003C lee el estado del VDP, que baja la peticion
+C 0x003F solo musica (los carteles y las esperas)?
+C 0x0046 los tres trenes negros: estalla alguno?
+C 0x004D su cuenta de la explosion
+C 0x0053 el segundo
+C 0x0060 el tercero
+C 0x006D y el blanco: ha chocado?
+C 0x0074 su explosion, y nada mas este cuadro
+C 0x007C la cuenta de paso del tren blanco
+C 0x0080 aun no le toca moverse
+C 0x0083 la velocidad...
+C 0x0085 ...recarga la cuenta
+C 0x0086 en la mitad de una pieza curva (paso 4 o mas)...
+C 0x008D ...va mas despacio: un cuadro mas...
+C 0x008F ...y con la velocidad 3 o mas, otro
+L 0x0094 mueve_tren_blanco         Un paso del tren blanco: su guion (0x0843)
+C 0x0094 la cuenta del guion del tren blanco
+L 0x009A mueve_negros              Los tres trenes negros: los que estan en marcha, un paso cada tres cuadros (cuatro en las curvas)
+C 0x009A en marcha
+C 0x009D su paso dentro de la pieza (+5 de su ficha)
+C 0x00A0 tres trenes
+C 0x00A7 este no esta
+C 0x00A9 su cuenta de paso (0xE064-0xE066)
+C 0x00AC aun no le toca
+C 0x00AF se recarga: tres cuadros...
+C 0x00B1 ...en la segunda mitad de la pieza...
+C 0x00B6 ...cuatro
+C 0x00B7 la cuenta de su guion (+6)
+C 0x00B9 un paso del guion
+C 0x00BE la ficha siguiente: 32 bytes
+C 0x00C3 el tren siguiente
+C 0x00C6 el tren blanco ha chocado?
+C 0x00CA no: el mando empuja las piezas
+C 0x00CD el bucle principal sabe que ha pasado un cuadro
+C 0x00D5 el rotulo del jugador parpadea
+C 0x00D8 en la demostracion no suena nada
+C 0x00DE los tres canales de musica
+C 0x00E4 el 2
+C 0x00E9 el 3
+L 0x00EE relojes                   La cuenta de cuadros y la espera de 0xE1E0, que baja cada 32 cuadros
+C 0x00EE la cuenta de cuadros
+C 0x00F3 cada 32 cuadros...
+C 0x00F8 ...la espera, si no ha llegado a cero...
+C 0x00FB ...baja uno
+C 0x00FC se devuelve lo que se toco
+C 0x0100 y se vuelve con las interrupciones abiertas
+
+# ======================================================================
+# LA MUSICA
+# ======================================================================
+B 0x0103 UN CANAL DE MUSICA (HL = su ficha + 1: 0xE3A1, 0xE3A9, 0xE3B1). La ficha: +0/+1 el puntero a las notas (a cero, callado), +2 lo que le queda a la nota, +3 su registro de tono en el PSG, +4 el tempo corto. Cada nota son tres bytes: tono bajo, tono alto (con la duracion en el nibble alto) y volumen; un 0x01 suelto pasa al tempo corto y 0xFF acaba.
+L 0x0103 canal_musica              Un cuadro de un canal: la nota sigue o se pasa a la siguiente
+C 0x0103 el byte alto del puntero
+C 0x0105 a cero: el canal calla
+C 0x0106 el puntero a la nota
+C 0x010A lo que le queda a la nota
+C 0x010D aun suena: un cuadro menos
+C 0x010F la nota siguiente
+C 0x0110 0xFF: se acabo
+C 0x0115 un 0x01...
+C 0x0119 ...pasa al tempo corto (+4)...
+C 0x011A ...y se salta
+L 0x011D toca_nota                 Los tres bytes de la nota al PSG: tono bajo, tono alto y volumen
+C 0x011D el registro de tono del canal (0, 2 o 4)
+C 0x0120 de la nota...
+C 0x0121 ...el tono bajo
+C 0x0125 el registro siguiente...
+C 0x0128 ...el tono alto
+C 0x012A 1, 3 o 5 -> 0x80, 0x81, 0x82...
+C 0x012B ...+ 0x88: 8, 9 o 10, su volumen
+C 0x012F el volumen
+C 0x0132 el puntero, ya en la nota siguiente
+C 0x0135 el tono alto de la que suena
+C 0x0136 lleva la duracion arriba
+C 0x0138 el tempo
+C 0x013A tempo corto?...
+C 0x013D ...la duracion entre 16...
+C 0x013F ...y si no, entre 4
+C 0x0141 lo que dura
+C 0x0145 el puntero, guardado
+L 0x014B cuenta_nota               Un cuadro menos de la nota
+L 0x014D calla_canal               El canal se acabo: el puntero a cero y su volumen a cero
+C 0x014D A = 0
+C 0x014F sin puntero
+C 0x0153 el tempo, normal
+C 0x0154 el registro de tono...
+C 0x0155 ...0, 1 o 2...
+C 0x0158 ...+ 8: su volumen...
+C 0x015C ...a cero
+
+# ======================================================================
+# EL ARRANQUE
+# ======================================================================
+B 0x0160 INIT: la maquina entera para el juego. La RAM a cero, la VRAM a cero, los registros del VDP, las letras y los sprites, los colores, el PSG, y el titulo con el logotipo de HIT BIT.
+L 0x0160 init                      El arranque: RAM, VRAM, VDP, letras, colores y titulo
+C 0x0160 el PPI: fila 0 del teclado, el clic callado
+C 0x0164 el registro 15 del PSG...
+C 0x0168 ...el puerto de mando 1
+C 0x016C la pila, al final de la RAM
+C 0x016F registro 1 del VDP = 0xA2: la pantalla apagada
+C 0x0173 la RAM 0xE000-0xE7FF...
+C 0x017C ...a cero (L vale 0)
+C 0x017F la interrupcion, solo musica
+C 0x0186 la VRAM desde 0x0000...
+C 0x018A ...256 ceros...
+C 0x018F ...64 veces: los 16 KB
+C 0x0192 los ocho registros del VDP (0x1346)
+C 0x0195 ocho
+C 0x0197 el registro 0
+C 0x0199 su valor
+C 0x019C el siguiente
+C 0x019F los patrones desde la letra 9 (0x2048)
+C 0x01A3 tres dibujos, cada uno en cinco letras seguidas
+C 0x01A9 cinco
+C 0x01AC 8 bytes...
+C 0x01AE ...el mismo dibujo otra vez
+C 0x01B6 el dibujo siguiente
+C 0x01BB y de seguido, 3 x 256 + 152 bytes: las letras 0x18-0x8A
+C 0x01C9 las 23 letras de 0x1D17, cuatro veces
+C 0x01CE 184 bytes
+C 0x01D6 y 176 mas: la fuente
+C 0x01DB los patrones de los sprites (0x1800)...
+C 0x01DF ...los 8 sprites de 16 x 16
+C 0x01EA los colores del titulo (0x134E)
+C 0x01F0 el PSG: cinco parejas (0x0F1F)
+C 0x01F5 los colores, a los tres tercios
+C 0x01F8 y los patrones de 0x2000...
+C 0x01FB ...a los otros dos tercios (0x2800 y 0x3000)
+C 0x0201 el registro de tono de los canales 2 y 3...
+C 0x0206 ...2 y 4
+C 0x020A el titulo: SONY, HIT BIT, CRAZY TRAIN, (c) Konami 1983
+C 0x0211 nueve tramos de 32 cuadros (casi cinco segundos)
+C 0x0216 disparo o barra?
+C 0x0219 si: a la partida con lo de la vez anterior
+B 0x021C EL MENU: la pantalla del record y las cuatro opciones. Las teclas 1-4 empiezan la partida; sin tocar nada, a los 20 tramos de 32 cuadros (unos once segundos) empieza la demostracion.
+L 0x021C menu                      El menu: record, opciones y espera
+C 0x021C la pantalla del menu (0x14B3)
+C 0x021F el record...
+C 0x0222 ...en la fila 9
+C 0x0225 cuatro cifras...
+C 0x0228 ...y el cero de detras
+C 0x022C la espera: 20 tramos
+L 0x0231 menu_espera               Mira las teclas 1-4 hasta que se acaba la espera
+C 0x0231 se marca la demostracion
+C 0x0236 se acabo la espera?
+C 0x023A si: a la demostracion
+C 0x023C los canales de musica, callados
+C 0x0240 no hay demostracion...
+C 0x0242 ...ni su mando
+C 0x0244 el mando, de momento
+C 0x0249 la fila 0 del teclado: las teclas 0-7
+L 0x024D elige_opcion              Las teclas 1-4 (a cero lo pulsado): 1 y 2 con el mando, 3 y 4 con el teclado
+C 0x024D el bit 1...
+C 0x024E "1": un jugador con el mando
+C 0x0252 pulsado
+C 0x0254 "2": dos jugadores con el mando
+C 0x0257 el bit 2
+C 0x025A ni 1 ni 2:...
+C 0x025B ...entonces el teclado
+C 0x0260 "3": un jugador con el teclado
+C 0x0263 el bit 3
+C 0x0266 "4": dos jugadores con el teclado
+C 0x0269 el bit 4
+C 0x026C nada: otra vuelta
+L 0x026E un_jugador                Un jugador
+L 0x0271 dos_jugadores             Dos jugadores
+L 0x0273 opcion_elegida            Se guarda cuantos juegan y se deja en pantalla solo la opcion elegida
+C 0x0273 cuantos
+C 0x0277 el texto de la opcion
+C 0x0278 las cuatro opciones (0x39A0)...
+C 0x027B ...se borran: 96 ceros
+C 0x0285 y se pinta la elegida
+C 0x0288 y el rotulo de debajo
+B 0x028E LA PARTIDA (o la demostracion, con 0xE260 a 1): las fichas de los dos jugadores, la musica de salida y todo a cero.
+L 0x028E empieza_partida           Las fichas de los jugadores, la musica de salida y los marcadores a cero
+C 0x0291 dos jugadores?
+C 0x0292 0xE001
+C 0x0296 el jugador 2...
+C 0x0299 ...sus trenes...
+C 0x029C ...y su tablero
+L 0x02A0 prepara_jugador1          Y lo mismo del jugador 1, que es el que empieza
+C 0x02A0 el jugador 1
+C 0x02A2 sus trenes
+C 0x02A5 y su tablero
+C 0x02A8 en la demostracion, sin musica
+C 0x02AE el PSG, cinco parejas
+C 0x02B3 la interrupcion, solo musica
+C 0x02B9 la musica de salida: los tres canales (0x1717, 0x174B, 0x17AC)
+C 0x02CC hasta que se acaba el canal 2
+L 0x02D2 a_cero                    Los tableros de los dos jugadores a 0, las fases y los puntos a cero, tres vidas y la cabecera
+C 0x02D2 cero
+C 0x02D5 el tablero de cada jugador
+C 0x02D8 la fase
+C 0x02DB los puntos del 1
+C 0x02DE los del 2
+C 0x02E1 las vidas extra ya dadas
+C 0x02E4 los toques de los trenes negros
+C 0x02E7 la primera fase de la partida
+C 0x02EB la zona de juego, en blanco
+C 0x02EE tres vidas a cada uno
+C 0x02F4 y seis estaciones
+C 0x02FA la cabecera: 1P-00000 2P-00000 HIGH-00000
+C 0x0300 en la demostracion...
+C 0x0306 ...o con un jugador...
+C 0x030C ...se borra el marcador del 2P
+B 0x0313 UNA FASE NUEVA del jugador en curso: su tablero y sus trenes desde la reserva, la fase uno mas, el hueco en su sitio de salida y las estaciones por visitar.
+L 0x0313 fase_nueva                Empieza una fase: tablero, trenes, fase, hueco y estaciones
+C 0x0313 el tablero (y en la fase 4 en adelante, revuelto)
+C 0x0316 las fichas de los trenes, de la reserva del jugador
+C 0x0319 sin toques
+C 0x0320 la fase...
+C 0x0326 ...uno mas, en BCD
+C 0x032A tras la 99...
+C 0x032C ...la 02
+C 0x032E el hueco empieza en la fila 1, columna 4
+C 0x0335 que tablero toca (0-3)
+C 0x033B las estaciones que hay que visitar...
+C 0x0341 ...segun el tablero (0x11A7: 6, 8, 8 y 10)
+C 0x0349 la lista de estaciones del jugador
+C 0x0352 las 16, con un valor que no es cero...
+C 0x035B ...y las N de este tablero, a cero: por visitar
+C 0x0361 ni trenes negros en marcha ni explosiones
+L 0x036C sigue_tras_perder         Tras perder una vida: el tren blanco vuelve a donde estaba (0xE1C0)
+C 0x036C donde estaba el tren...
+C 0x0370 ...de este jugador
+C 0x0375 a su sprite
+L 0x0380 prepara_tablero           La fase en marcha: los relojes, la pieza sin deslizar, la velocidad y el hueco
+C 0x0380 la espera del primer tren negro
+C 0x0383 cero
+C 0x0385 sin cruce
+C 0x0388 ningun tren encima de la pieza que se desliza
+C 0x038E ninguna pieza deslizandose
+C 0x0391 ninguna direccion
+C 0x0395 el hueco del jugador
+C 0x039E la velocidad del tren: un paso cada 4 cuadros
+C 0x03A2 y las cuentas de paso de los cuatro, a 1
+C 0x03A9 la demostracion
+C 0x03AF ningun tren negro esperando
+C 0x03B4 quedan estaciones?
+C 0x03BB si: a jugar
+B 0x03BD FASE SUPERADA: la musica de la fase, 200 puntos, los sprites fuera y el tablero siguiente (hasta el cuarto, que se repite).
+L 0x03BD fase_superada             Todas las estaciones visitadas: musica, puntos y tablero siguiente
+C 0x03BD el PSG, cinco parejas
+C 0x03C2 la interrupcion, solo musica
+C 0x03C8 la musica de la fase superada (0x17D1, 0x1802, 0x1833)
+C 0x03DB hasta que acaba el canal 1
+C 0x03E1 200 puntos
+C 0x03E6 el tren blanco, fuera (Y = 0xD1)
+C 0x03EE y los negros
+C 0x03F1 el tablero siguiente...
+C 0x03F8 ...hasta el cuarto
+C 0x03FC las fichas de reserva, de nuevo
+C 0x03FF y otra fase
+B 0x0402 EL TABLERO EN PANTALLA: los colores del juego y las 48 casillas, de 4 x 4 letras cada una, desde 0x3820.
+L 0x0402 pinta_tablero             El tablero entero y el marcador; la musica del tren y a jugar
+C 0x0402 la zona de juego, en blanco
+C 0x0405 los colores del juego (0x134E)
+C 0x040B a los tres tercios
+C 0x040E la primera casilla, en la fila 1
+C 0x0412 el tablero del jugador
+C 0x041A las casillas, en DE
+C 0x041C 48 casillas
+L 0x041F pinta_casilla             Una casilla: su pieza (0x0A7D) en el sitio de la pila
+C 0x041F la pieza
+C 0x0421 la siguiente, guardada
+C 0x0425 cuatro por cuatro letras
+C 0x0428 la ultima?
+C 0x042D cuatro letras a la derecha...
+C 0x0430 ...salvo en la ultima columna (0x1C)...
+C 0x0437 ...que baja tres filas y vuelve al principio
+C 0x043A el sitio de la siguiente, para 0x0A7D
+L 0x0441 marcadores                La fase y las vidas (fuera de la demostracion)
+C 0x0447 STAGE
+C 0x044A las vidas
+L 0x044D en_marcha                 El tren blanco arranca: su guion, el PSG, el sonido del tren, el mando del jugador y una espera
+C 0x044D el primer paso del guion del tren blanco
+C 0x0453 el PSG: seis parejas, con el ruido
+C 0x0458 el canal 1: el traqueteo (0x1849)
+C 0x045F el jugador...
+C 0x0460 ...el registro 15...
+C 0x0464 ...mando 1 para el jugador 1...
+C 0x0468 ...mando 2 para el 2
+C 0x046E dos tramos de 32 cuadros
+C 0x0473 a cero: la interrupcion mueve los trenes
+C 0x0476 el tablero aun no ha cambiado de color
+C 0x0479 la espera: 60 tramos de 32 cuadros (32 segundos)
+
+B 0x047E EL BUCLE DE LA PARTIDA: el color del tablero, el traqueteo, los choques, los puntos, el boton que acelera, la cuenta del tren negro que va a salir y el final de la fase.
+L 0x047E bucle_partida             Una vuelta del bucle de la partida
+C 0x047E se acabo la espera de 32 segundos?
+C 0x0484 y aun no ha cambiado?
+C 0x048A ya cambia: una vez
+C 0x048D los colores de 0x1390: el tablero pierde los colores de las piezas
+C 0x0493 a los tres tercios
+L 0x0496 traqueteo                 El canal 3 vuelve a sonar cuando se acaba: mas deprisa con la velocidad 2
+C 0x0496 el canal 3 calla?
+C 0x049C la velocidad
+C 0x049F a tope (2)...
+C 0x04A1 ...el traqueteo rapido (0x18A6)
+C 0x04A6 si no, el normal (0x1899)
+L 0x04AC choque_blanco             El tren blanco (sprite 0) contra los tres negros
+C 0x04AC los negros
+C 0x04AF el blanco
+C 0x04B9 tres
+C 0x04BC se tocan?
+C 0x04C1 cual: (la X de su sprite - 5) / 4
+C 0x04C9 esta en marcha?
+C 0x04CF no: nada
+C 0x04D2 el tren blanco saldra otra vez desde su casilla
+C 0x04D8 la pieza y la casilla del tren blanco
+C 0x04DB si esta en una estacion, cuenta
+C 0x04DE no lo estaba
+C 0x04E0 las casillas de estacion ya pisadas...
+C 0x04E4 ...a cero
+C 0x04E7 ha chocado en una estacion
+C 0x04E9 llevaba las dos: esa estacion ya se habia contado...
+C 0x04F1 ...y se devuelve la que resta 0x090C
+C 0x04F3 el negro estalla
+C 0x04F6 y el blanco choca
+L 0x0502 choque_negros             Los trenes negros entre si: el 1 contra el 2, y el 3 contra los dos
+C 0x0504 el 1 y el 2...
+C 0x0507 ...hay alguno?
+C 0x050C el sprite 2
+C 0x0511 contra el 1
+C 0x0518 se tocan: el ruido del choque en los canales 2 y 3
+C 0x0521 si el 1 estaba en una estacion, cuenta...
+C 0x0529 ...y si no, la del 2
+C 0x052F y los dos estallan
+L 0x0537 choque_tercero            El tercer tren negro contra los otros dos
+C 0x0538 en marcha...
+C 0x053E ...y sin estallar?
+C 0x0544 el sprite 3
+C 0x0549 contra el 1 y el 2
+C 0x0551 el ruido del choque
+C 0x055A si estaba en una estacion, cuenta
+C 0x0561 2 -> el 1, 1 -> el 2: con cual ha chocado
+C 0x0563 ese estalla...
+C 0x0566 ...y el tercero tambien
+L 0x056B puntos                    Los puntos del jugador y el record
+C 0x056B los del jugador
+C 0x056E el 1 contra el record
+C 0x0575 el 2 contra el record
+C 0x057C el tren blanco ha chocado?...
+C 0x0580 ...con acarreo...
+C 0x0581 ...al final de la vuelta
+C 0x0584 quedan estaciones?
+C 0x058B no: fase superada (sin acarreo)
+C 0x058E en la demostracion no hay boton
+L 0x0594 boton_acelera             El boton (o la barra), una vez por cuadro: apretado 32 cuadros, el tren acelera; suelto 32 cuadros, frena
+C 0x0594 ha pasado un cuadro?
+C 0x059B se gasta
+C 0x059D el mando
+C 0x05A1 los dos botones
+C 0x05A3 con el mando, ya esta
+C 0x05AA el teclado: la fila 7 (SELECT, bit 6)...
+C 0x05B2 ...y la fila 8 (la barra, bit 0)
+C 0x05BC los dos bits
+L 0x05BE mira_boton                A 1 lo suelto: apretado o no
+C 0x05BF las cuentas
+C 0x05C4 suelto
+C 0x05C6 apretado: la cuenta de suelto a cero...
+C 0x05C9 ...y la de apretado, uno mas
+C 0x05CB 32 cuadros?
+C 0x05CF otra vez desde cero
+C 0x05D2 la velocidad (cuadros por paso)...
+C 0x05D3 ...si es 3 o mas...
+C 0x05D7 ...uno menos: mas deprisa
+L 0x05DA boton_suelto              Suelto: la cuenta de suelto, y a los 32 cuadros el tren frena
+C 0x05DA uno mas
+C 0x05DD la de apretado, a cero
+C 0x05DF 32 cuadros?
+C 0x05E4 otra vez desde cero
+C 0x05E8 la velocidad...
+C 0x05E9 ...si es menos de 4...
+C 0x05ED ...uno mas: mas despacio
+L 0x05EE cuenta_tren_negro         La cuenta junto a la estacion de la que va a salir un tren negro: baja uno cada 48 cuadros, y a cero sale
+C 0x05EE ha pasado un cuadro?
+C 0x05F5 se gasta
+C 0x05F6 hay un tren negro anunciado (0xE241)?
+C 0x05FC el divisor de 48 cuadros
+C 0x05FF se recarga
+C 0x0602 la cuenta (BCD)...
+C 0x0603 ...uno menos
+C 0x0608 a dos cifras
+C 0x060D las cifras
+C 0x0610 la ultima es siempre un "0"
+C 0x0612 las tres direcciones de la VRAM, de la ultima a la primera
+C 0x0615 la direccion...
+C 0x061A una letra
+C 0x0621 la siguiente
+C 0x0623 hasta 0xE244
+C 0x0625 la cifra siguiente
+C 0x0628 a cero...
+C 0x0629 ...sale el tren negro
+L 0x062C mira_vueltas              El tren blanco ha entrado en otra casilla: se sigue su camino por adelantado; si vuelve al mismo sitio, va dando vueltas y no se le dan los 10 puntos por casilla
+C 0x062C hay que mirarlo?
+C 0x0633 una vez
+C 0x0634 la casilla y la direccion del tren blanco...
+C 0x0637 ...el punto de partida...
+C 0x063A ...y el que avanza
+L 0x0640 sigue_camino              Una casilla mas del camino
+C 0x0640 a la casilla de al lado
+C 0x0643 la pieza: por donde sale
+C 0x0646 sin via (o el hueco)...
+C 0x0648 ...el camino se acaba: no da vueltas
+C 0x064C la casilla y la direccion a las que se llega
+C 0x0650 contra las de partida
+C 0x065B iguales: vuelve al mismo sitio
+L 0x065F marca_vueltas             0xE1AA: el tren da vueltas (1) o no (0)
+L 0x0663 estacion_cerrada          Se ha cerrado una estacion: el tren negro que estuviera en ella estalla
+C 0x0663 el tablero ha cambiado?
+C 0x066A una vez
+C 0x066B el tren negro 1...
+C 0x0670 ...su casilla
+C 0x0674 en la estacion cerrada?
+C 0x0677 el 2
+C 0x0686 el 3
+L 0x0695 fin_vuelta                En la partida, otra vuelta; en la demostracion, el disparo la corta
+C 0x0695 la demostracion?
+C 0x0699 no: otra vuelta
+C 0x069C disparo o barra?
+C 0x069F no: sigue la demostracion
+C 0x06A3 los canales, callados...
+C 0x06A7 ...y fuera la demostracion
+C 0x06AA la interrupcion, solo musica
+C 0x06AF el tren blanco, fuera
+C 0x06B4 y los negros
+L 0x06BB al_menu                   El menu otra vez, y la opcion que se trae en A
+C 0x06BC la pantalla del menu
+C 0x06C0 la opcion
+B 0x06C3 EL FINAL DE LA FASE: con acarreo el tren blanco ha chocado, sin el se han visitado todas las estaciones.
+L 0x06C3 fin_de_fase               Choque o fase superada
+C 0x06C4 el rotulo del jugador, encendido
+C 0x06CD sin acarreo: fase superada
+C 0x06D0 el ruido del choque en los canales 2 y 3
+L 0x06D9 espera_explosion          Hasta que acaba la explosion del tren blanco
+C 0x06DF la interrupcion, solo musica
+C 0x06E3 los trenes negros, fuera
+C 0x06E6 la demostracion acaba aqui...
+C 0x06EA ...en el menu
+C 0x06ED una vida menos
+C 0x06F3 sin vidas: se acabo
+C 0x06F5 habia chocado justo al cerrar una estacion?...
+C 0x06F9 ...no
+C 0x06FB se borra
+C 0x06FC si quedan estaciones...
+C 0x0704 ...el tren sale de una de ellas, al azar
+L 0x070B cambia_jugador            Con dos jugadores, el turno pasa al otro si le quedan vidas
+C 0x070B dos jugadores?
+C 0x0712 el otro, si tiene vidas
+C 0x0715 el de antes
+C 0x0716 al otro
+C 0x0718 sin vidas: sigue el mismo
+L 0x071B sigue_el_mismo            A la fase del jugador en curso, donde la dejo
+L 0x071E turno_del_otro            Se guardan los trenes del que deja de jugar
+L 0x0721 entra_el_otro             Los trenes del que entra, la pantalla en blanco y PLAYER 1 / PLAYER 2
+C 0x0721 sus trenes
+C 0x0724 una espera
+C 0x0729 la zona de juego, en blanco
+C 0x072C PLAYER 1...
+C 0x0732 ...o PLAYER 2
+C 0x0738 cuatro tramos de 32 cuadros
+C 0x073D el jugador 1...
+C 0x073F ...sigue donde estaba
+C 0x0741 el 2, la primera vez...
+C 0x0747 ...empieza su primera fase
+B 0x074C SE ACABO para este jugador: GAME OVER y su musica; con dos jugadores, el otro sigue si le quedan vidas.
+L 0x074C game_over                 GAME OVER: el rotulo, la musica, y el otro jugador o el menu
+C 0x074C GAME OVER
+C 0x0752 el PSG, cinco parejas
+C 0x0758 la musica del final (0x18C6, 0x18FD, 0x1925)
+L 0x076B espera_game_over          Hasta que acaba el canal 1
+C 0x0771 dos jugadores?
+C 0x0778 el otro tiene vidas: le toca
+L 0x077E fin_de_partida            Ocho tramos de 32 cuadros: el disparo vuelve a empezar; si no, el menu
+L 0x0783 espera_fin                Mira el disparo hasta que se acaba la espera
+C 0x0783 se acabo la espera?
+C 0x0787 si: el menu
+C 0x078A disparo o barra?
+C 0x078D si: otra partida
+
+# ======================================================================
+# TEXTOS, ROTULO Y EXPLOSIONES
+# ======================================================================
+B 0x0792 TEXTOS: bloques de "direccion de la VRAM (alto, bajo), letras, 0xFF"; dentro, 0xFE N L repite N veces la letra L; un 0xFF tras el 0xFF del bloque acaba la lista.
+L 0x0792 pinta_textos              Una lista de bloques de texto a la VRAM
+C 0x0792 la direccion
+C 0x0796 al VDP
+L 0x0797 texto_letra               Letra a letra
+C 0x0798 0xFE: una tira
+C 0x079E cuantas
+C 0x07A0 de que letra
+C 0x07A4 lo que sigue
+L 0x07A6 texto_fin                 0xFF: se acaba el bloque
+C 0x07AA una letra
+L 0x07AE texto_bloque              Otro bloque, o el final de la lista (otro 0xFF)
+C 0x07B1 0xFF otra vez: se acabo
+C 0x07B5 HL detras de la lista
+L 0x07B7 parpadea_rotulo           El rotulo 1P- o 2P- del jugador que juega se enciende y se apaga cada 24 cuadros
+C 0x07B7 en la demostracion, no
+C 0x07BC la cuenta
+C 0x07C1 se recarga
+C 0x07C3 encendido o apagado
+L 0x07C5 pon_rotulo                Con A a 0 se apaga (tres ceros de 0xE0E0) y con A a 1 se enciende (0x1565, 1P- o 2P-)
+C 0x07C5 el rotulo
+C 0x07C8 estaba apagado?
+C 0x07CB lo estara...
+C 0x07CD ...pintando ceros
+L 0x07D0 rotulo_a_vram             Las tres letras en la fila 0: columna 2 (1P) u 11 (2P)
+C 0x07D0 la vez siguiente, lo contrario
+C 0x07D2 el del jugador 1
+C 0x07D8 el del 2: nueve letras mas alla...
+C 0x07DB ...en la columna 11
+C 0x07DD tres letras
+L 0x07E3 explosion                 Un cuadro de la explosion de un tren (HL = su cuenta, DE = su bandera): el dibujo cambia cada 4 cuadros, y a los 20 cambios el tren desaparece
+C 0x07E3 un cuadro menos
+C 0x07E4 aun no toca cambiar
+C 0x07E5 cada 4 cuadros
+C 0x07E8 el sprite de su tren...
+C 0x07EB ...en la tabla del jugador
+C 0x07F1 su patron
+C 0x07F2 el siguiente...
+C 0x07F5 ...de los cuatro de la explosion
+C 0x07F8 es el tren blanco?
+C 0x07FF los negros estallan con los patrones de 0x20
+L 0x0803 explosion_vram            Los sprites a la VRAM y cuantos cambios lleva
+C 0x0803 a la VRAM
+C 0x0808 el sprite, a mano
+C 0x080B los cambios
+C 0x080C uno mas
+C 0x080E 20?
+C 0x0810 aun no
+C 0x0811 se acabo: a cero...
+C 0x0814 ...y la bandera del tren, tambien
+C 0x0815 el sprite
+C 0x0817 su Y
+C 0x081A fuera de la pantalla
+C 0x081C el tren blanco?...
+C 0x0821 ...se guarda donde estaba, para la vida siguiente (0xE1C0)
+L 0x082C explosion_sube            Los sprites a la VRAM
+L 0x082F explosion_negro           Un tren negro: deja de estar en marcha y su casilla a cero
+C 0x082F su bandera de "en marcha" (0xE067-0xE069)...
+C 0x0833 ...a cero
+C 0x0834 su ficha: 0xE322, 0xE342 o 0xE362
+C 0x0840 sin casilla
+
+# ======================================================================
+# LOS GUIONES DE LOS TRENES
+# ======================================================================
+B 0x0843 UN PASO DEL GUION DE UN TREN (HL = la cuenta de su ficha, +6). El guion son bytes "veces x 16 + direccion" (0x0850): mientras la cuenta no llega a cero el sprite avanza un pixel en su direccion; a cero, el codigo de la ficha lee el byte siguiente. Las direcciones del sprite: 0 arriba, 1 abajo, 2 derecha, 3 izquierda, 4-7 las diagonales.
+L 0x0843 paso_de_tren              La cuenta baja: un pixel mas, o el byte siguiente del guion
+C 0x0843 un paso menos
+C 0x0844 quedan: un pixel en la misma direccion (0x08B7)
+C 0x0846 el puntero al guion...
+C 0x084A ...a IX
+C 0x084D al codigo de la ficha (+9): lee el byte (IX + n), suma uno a n y salta a 0x0850
+L 0x084E salta_hl                  jp (hl): al codigo de la ficha o al trocito de 0x0AE0
+D 0x084F 0x0850 ret_suelto_084F  0xC9 (ret) suelto detras del jp (hl): nadie salta aqui
+B 0x0850 EL BYTE DEL GUION (A), que trae el codigo de la ficha: 0xFF acaba la casilla (0x0E61), 0x10 es un callejon sin salida (el tren choca) y lo demas, "veces x 16 + direccion".
+L 0x0850 byte_de_guion             Lo que dice el byte del guion
+C 0x0850 0xFF: fin de la casilla
+C 0x0854 la ficha...
+C 0x0855 ...su numero (+4)...
+C 0x0859 ...esta encima de la pieza que se desliza?
+C 0x0860 no: a la casilla siguiente
+C 0x0864 si: choca. El blanco?...
+C 0x0868 ...saldra otra vez desde su casilla
+L 0x0871 choca                     El tren choca (0x0EFB)
+L 0x0874 callejon                  0x10: el tren no tiene por donde seguir
+C 0x0878 el blanco (la cuenta en 0xE306)...
+C 0x087E ...choca
+C 0x0880 los negros siguen a la casilla de al lado
+L 0x0883 tramo                     Un tramo nuevo: la cuenta y la direccion del sprite, y su patron
+C 0x0884 ya no esta recien salido de una estacion
+C 0x0889 menos de 4: 32 pixeles en esa direccion (una casilla recta)
+C 0x088F si no, las veces en el nibble alto...
+C 0x0891 ...y la direccion en el bajo
+C 0x0894 la direccion (+5)
+C 0x0897 el numero del tren (+4)
+C 0x0899 su sprite: 0xE082 + 4 x el numero
+C 0x08A3 el blanco
+L 0x08A5 busca_sprite              Cuatro bytes por sprite
+C 0x08AA un negro: de dos en dos direcciones...
+C 0x08AE ...los patrones de 0x20
+L 0x08B2 patron_blanco             El blanco: un patron por direccion
+L 0x08B5 pon_patron                El patron, y el primer pixel del tramo
+L 0x08B7 un_pixel                  El sprite del tren, un pixel en su direccion (el trocito de 0x0AE0 + 3 x la direccion)
+C 0x08B7 la direccion (+5)...
+C 0x08BA ...por 3
+C 0x08BD el numero del tren (+4)...
+C 0x08BF ...por 4
+C 0x08C2 los sprites del jugador
+L 0x08CA lee_sprite                Y a D, X a E
+C 0x08CA su sprite
+C 0x08D0 el trocito de la direccion
+C 0x08D5 mueve D y E
+C 0x08D9 la X...
+C 0x08DB ...y la Y
+L 0x08DC sube_sprites              Los cuatro sprites del jugador a la tabla de atributos (0x3B00)
+C 0x08DD los del jugador 1...
+C 0x08E3 ...o los del 2
+C 0x08E5 16 bytes a 0x3B00
+
+# ======================================================================
+# CHOQUES Y ESTACIONES
+# ======================================================================
+L 0x08EF se_tocan                  Sprites que se tocan: |dY| + |dX| < 15 entre HL y los B de DE (de cuatro en cuatro); acarreo si alguno
+C 0x08EF dY
+C 0x08F3 en positivo
+C 0x08F6 dX
+C 0x08FC en positivo
+C 0x08FE la suma
+C 0x0901 menos de 15: se tocan
+L 0x0904 otro_sprite               El sprite siguiente
+C 0x090A no se toca ninguno
+L 0x090C visita_estacion           Si el tren (L = su pieza, H = su casilla) esta en una estacion (pieza < 8), se da por visitada y se cierra; acarreo si lo estaba
+C 0x090C su pieza
+C 0x090D no es estacion
+C 0x0910 cual de las estaciones del tablero
+C 0x0914 visitada
+C 0x0918 sus dos casillas y su lado
+C 0x091B se guardan las casillas (0xE051, 0xE052)...
+C 0x0921 ...y la pieza (0xE050)
+C 0x0925 se cierra
+C 0x0928 una estacion menos
+C 0x092F de la que iba a salir el tren negro?...
+C 0x0933 ...entonces ya no sale
+C 0x0936 lo estaba
+L 0x0938 fuera_negros              Los tres trenes negros, fuera: sin marcha, sin casilla, y sus sprites abajo
+C 0x0938 el 3, el 2 y el 1
+C 0x093B sin marcha
+C 0x093F sin casilla
+C 0x0946 sus sprites...
+C 0x094E ...los tres
+L 0x0950 sprite_fuera              Y = 0xD1: fuera
+L 0x095B sale_negro                Un tren negro sale de la estacion anunciada (0xE24D), si hay sitio para el; acarreo si no
+C 0x095B sus dos casillas y su lado
+C 0x0961 el lado menos uno: la direccion en la que arranca, por la via del marco
+C 0x0966 los tres trenes negros
+C 0x0969 el 1: en marcha o estallando?
+C 0x0970 el 2
+C 0x0979 el 3
+C 0x097D los tres ocupados: no sale
+L 0x0981 pon_negro                 El tren negro A (0-2) en marcha: su casilla, su direccion y su primer paso
+C 0x0981 en marcha
+C 0x0982 su ficha: 0xE322 + 32 x A
+C 0x0989 la casilla
+C 0x098B y la direccion
+C 0x0992 la cuenta, a 1
+C 0x0997 el guion, en el 0xFF del final: entra en la casilla
+C 0x0999 su sprite en el borde de la casilla
+C 0x099D y el primer paso
+L 0x09A2 negro_en_cerrada          El tren negro B, si su casilla (A) es una de las dos de la estacion que se cierra, estalla
+C 0x09A2 las dos casillas
+L 0x09AA estalla_negro             El tren negro B estalla
+C 0x09AA su explosion
+L 0x09B1 quita_negro               El tren negro B, sin marcha y sin pieza
+C 0x09B1 sin marcha
+C 0x09B8 su ficha
+L 0x09BC busca_ficha               32 bytes por ficha
+C 0x09C1 sin pieza
+L 0x09C5 estacion_al_azar          Una estacion del tablero sin visitar, al azar: C y D sus casillas, B su lado, E su numero
+C 0x09C5 el tablero del jugador
+C 0x09CB la lista de sus estaciones (0x115F)
+C 0x09D4 cuantas tiene (0x11A7)
+C 0x09DA la primera...
+C 0x09DE ...en la lista del jugador
+C 0x09DF al azar...
+C 0x09E3 ...entre las ocho primeras
+L 0x09E5 busca_sin_visitar         La siguiente, dando la vuelta a las 12
+C 0x09E9 pasa de la 12?...
+C 0x09ED ...vuelve al principio
+L 0x09F3 sin_visitar               A cero: sin visitar
+C 0x09F7 su numero
+L 0x09FC estacion_n                La estacion A de la lista DE: sus dos casillas (C, D) y su lado (B)
+C 0x09FD dos casillas por estacion
+L 0x09FF lado_estacion             El lado de la estacion: 0 abajo (fila 5), 1 izquierda, 2 arriba (fila 0), 3 derecha
+C 0x09FF la primera casilla
+C 0x0A01 la segunda
+C 0x0A05 la fila 5: abajo
+C 0x0A0A la fila 0: arriba
+C 0x0A0E la primera casilla en fila par: izquierda; impar: derecha
+L 0x0A14 cierra_estacion           La estacion de HL (pieza, casilla, casilla) se cierra: sus dos casillas pasan a la pieza 8-11 (las cruces) y se pintan
+C 0x0A14 la pieza de estacion (0-7) / 2...
+C 0x0A18 ...+ 8: 8 arriba, 9 derecha, 10 abajo, 11 izquierda
+C 0x0A1C la primera casilla
+C 0x0A1F la segunda
+C 0x0A20 las dos, para los trenes negros (0x0663)
+C 0x0A25 la primera en la VRAM
+C 0x0A29 la pieza nueva
+C 0x0A2F la segunda
+C 0x0A34 la pieza nueva
+C 0x0A3A 0xE058: la primera casilla
+C 0x0A3D en el tablero
+C 0x0A45 las dos
+C 0x0A48 el tablero ha cambiado
+C 0x0A4D STAGE...
+C 0x0A50 ...y las vidas, otra vez
+L 0x0A54 numero_estacion           El numero de la estacion que tiene la casilla A, y HL a su sitio en la lista del jugador (0xE160)
+C 0x0A55 el tablero del jugador
+C 0x0A5B su lista de casillas
+C 0x0A63 al principio
+L 0x0A66 busca_casilla             Hasta dar con la casilla
+C 0x0A6A el sitio en la lista...
+C 0x0A6F ...entre 2: el numero de la estacion
+L 0x0A71 lista_jugador             HL = 0xE160 (o 0xE170) + A: la estacion A del jugador
+C 0x0A72 la del jugador 1
+C 0x0A78 o la del 2
+L 0x0A7D pinta_pieza               La pieza A (16 letras de 0x15C7) en la direccion de la VRAM que se deja en la pila
+C 0x0A7D la vuelta, a un lado
+C 0x0A7E las piezas
+C 0x0A81 x 16
+C 0x0A89 la direccion de la VRAM
+C 0x0A8B la vuelta, otra vez en su sitio
+C 0x0A8C cuatro filas de cuatro
+L 0x0A91 pieza_de                  La pieza de la casilla (DE) a (DE - 1)
+C 0x0A92 la casilla
+C 0x0A94 su sitio en el tablero
+C 0x0A97 la pieza
+L 0x0A9B casilla_a_vram            La casilla A (fila x 8 + columna) a su direccion en la tabla de nombres, con el bit de escritura: 0x7820 + fila x 128 + columna x 4
+C 0x0A9C dos filas por cada 16...
+C 0x0AA2 ...256 letras
+C 0x0AA3 la columna...
+C 0x0AA6 ...x 4, desde la letra 32
+C 0x0AAA y la fila impar...
+C 0x0AAE ...4 filas mas abajo
+C 0x0AB1 la tabla de nombres
+L 0x0AB6 casilla_en_tablero        HL = el sitio de la casilla A en el tablero del jugador (A no se toca)
+C 0x0AB7 el del 1
+C 0x0ABD o el del 2
+L 0x0AC2 suma_puntos               B (BCD, decenas) a los puntos del jugador, salvo en la demostracion
+C 0x0AC7 los del 1
+C 0x0ACD o los del 2
+C 0x0AD0 las decenas y centenas
+C 0x0AD4 con acarreo, los millares
+C 0x0ADB pasa de 99990: vuelve a cero
+B 0x0AE0 LOS PASOS: ocho trocitos de 3 bytes, uno por direccion del sprite, que 0x08D5 llama con jp (hl). D es la Y y E la X.
+L 0x0AE0 paso_arriba               Direccion 0: Y - 1
+L 0x0AE3 paso_abajo                Direccion 1: Y + 1
+L 0x0AE6 paso_derecha              Direccion 2: X + 1
+L 0x0AE9 paso_izquierda            Direccion 3: X - 1
+L 0x0AEC paso_arriba_derecha       Direccion 4
+L 0x0AEF paso_abajo_izquierda      Direccion 5
+L 0x0AF2 paso_abajo_derecha        Direccion 6
+L 0x0AF5 paso_arriba_izquierda     Direccion 7
+
+# ======================================================================
+# SPRITES, PIEZAS Y TABLERO
+# ======================================================================
+L 0x0AF8 sprite_en_casilla         El sprite del tren de la ficha DE (+2 su casilla, +3 su direccion) en el borde de su casilla por el que va a salir
+C 0x0AF8 la direccion (0 arriba, 1 derecha, 2 abajo, 3 izquierda)...
+C 0x0AFA ...y la casilla
+C 0x0AFE la fila...
+C 0x0B04 ...x 2
+C 0x0B06 hacia arriba?...
+C 0x0B0A ...medio paso menos
+C 0x0B0B hacia abajo?...
+C 0x0B0F ...medio paso mas
+C 0x0B10 la Y: 16 + 16 x (2 x fila + el ajuste)
+C 0x0B16 la Y
+C 0x0B18 la columna...
+C 0x0B1B ...x 2
+C 0x0B1D hacia la derecha?...
+C 0x0B21 ...medio paso mas
+C 0x0B22 hacia la izquierda?...
+C 0x0B26 ...medio paso menos
+C 0x0B27 la X: 8 + 16 x (2 x columna + el ajuste)
+C 0x0B2D la X
+C 0x0B2F el numero de la ficha (bits 5-6 de su direccion)...
+C 0x0B32 ...x 4: su sprite
+C 0x0B3E en la tabla del jugador
+C 0x0B40 Y
+C 0x0B42 y X
+L 0x0B44 pinta_4x4                 16 letras de HL en cuatro filas de cuatro desde DE; para al llegar al final de la tabla de nombres
+C 0x0B44 cuatro filas
+L 0x0B46 fila_4x4                  Una fila de cuatro letras
+C 0x0B4B la fila de abajo
+C 0x0B50 se sale de la tabla de nombres (0x3B00)?
+C 0x0B56 cuatro filas
+B 0x0B5A EL TABLERO REVUELTO, desde el cuarto tablero: el interior (6 x 4 casillas) sale de la tira de 0x126B, empezando en un sitio que depende de la fase; el hueco en la casilla 12 y un cruce en la 28; y segun la fase, de 6 a 8 casillas pasan a ser vias rectas (la pieza 0x14) en los sitios de 0x127E.
+L 0x0B5A tablero_revuelto          El interior del cuarto tablero, revuelto segun la fase
+C 0x0B5A la fase
+L 0x0B60 fase_a_16                 La fase (BCD), de 1 a 16
+L 0x0B68 empieza_tira              Desde ese sitio de la tira
+C 0x0B6D la casilla 9: fila 1, columna 1
+L 0x0B6F casilla_de_tira           Una casilla del interior
+C 0x0B6F la pieza
+C 0x0B70 el cero del final: la tira vuelve a empezar
+C 0x0B75 su sitio en el tablero
+C 0x0B78 la pieza
+C 0x0B7A la casilla siguiente
+C 0x0B7E la columna 7?...
+C 0x0B82 ...a la columna 1 de la fila siguiente
+C 0x0B85 hasta la fila 5
+C 0x0B89 la casilla 12...
+C 0x0B91 ...es el hueco
+C 0x0B93 y la 28...
+C 0x0B96 ...un cruce
+C 0x0B98 la fase
+C 0x0B9E de la 11 en adelante:...
+C 0x0BA2 ...8 rectas desde la 20...
+C 0x0BA8 ...7 desde la 14...
+C 0x0BAE ...6 hasta la 13
+L 0x0BB0 fase_a_16b                Menos 16, hasta quedar por debajo
+L 0x0BB8 fase_baja                 Hasta la 10: tantas rectas como la fase - 1, con 6 como mucho
+C 0x0BB8 la fase - 1
+L 0x0BC0 pon_rectas                Las B rectas, desde ese sitio de la lista de 0x127E
+L 0x0BC4 pon_recta                 Una recta
+C 0x0BC4 la casilla
+C 0x0BC9 la pieza 0x14
+L 0x0BD0 tira_otra_vez             La tira vuelve a empezar
+L 0x0BD5 borra_pantalla            La tabla de nombres entera, a cero
+C 0x0BD5 768 letras
+L 0x0BDC borra_juego               La tabla de nombres desde la fila 2, a cero (la cabecera se queda)
+C 0x0BDC desde la fila 2: 704 letras
+L 0x0BE1 borra_nombres             256 ceros, y dos veces L ceros mas
+C 0x0BE1 256 ceros
+L 0x0BE8 borra_tramo               L ceros
+L 0x0BF1 otro_jugador              El turno al otro jugador; acarreo si le quedan vidas (B = el de antes)
+C 0x0BF1 el jugador en curso
+C 0x0BF6 el otro
+C 0x0BFB sus vidas
+C 0x0BFE sin vidas
+C 0x0BFF le quedan
+
+# ======================================================================
+# LOS MARCADORES
+# ======================================================================
+L 0x0C01 pinta_puntos              Los puntos del jugador en curso: fila 0, columna 5 (1P) o 14 (2P)
+C 0x0C01 los del 1
+C 0x0C0A los del 2
+L 0x0C10 pinta_record              El record: fila 0, columna 25
+L 0x0C16 pinta_cifras              Cuatro cifras BCD de HL en DE; con los puntos de un jugador, mira tambien la vida extra
+C 0x0C17 las decenas y centenas
+C 0x0C1A los millares
+C 0x0C1B es el record?
+C 0x0C20 las vidas extra que lleva el jugador
+C 0x0C27 cuatro ya: no hay mas
+C 0x0C2B la primera a los 5000...
+C 0x0C2F ...si aun no lleva ninguna
+L 0x0C33 umbral_vida               La siguiente cada 30000: 30000, 60000, 90000
+L 0x0C39 mira_vida_extra           Los puntos tienen que ser EXACTAMENTE el umbral (las decenas y centenas a cero)
+C 0x0C3A puntos menos umbral
+C 0x0C3D no son iguales
+C 0x0C3F una vida extra dada
+C 0x0C40 una vida mas
+C 0x0C46 las vidas en pantalla
+L 0x0C49 cifras_a_vram             Las cuatro cifras a la VRAM
+C 0x0C49 A = decenas y centenas, C = millares
+C 0x0C4A dos bytes
+C 0x0C4F las cuatro letras
+C 0x0C51 la direccion
+C 0x0C52 cuatro
+L 0x0C58 bcd_a_letras              B bytes BCD (A y luego C) a letras (0xE2 = "0"), de 0xE223 hacia atras
+L 0x0C5B byte_a_letras             Un byte: dos cifras
+C 0x0C5F la cifra baja
+C 0x0C62 como letra
+C 0x0C66 la alta
+C 0x0C6B el byte siguiente
+L 0x0C6F mira_record               Los puntos DE contra el record: si lo pasan, son el record nuevo
+C 0x0C6F el record
+C 0x0C74 no lo pasan
+C 0x0C76 record nuevo
+L 0x0C7C pinta_vidas               Las vidas que quedan, menos la que se juega: un tren pequeno (letra 0x64) cada una, en la fila 1
+C 0x0C7C en la demostracion, no
+C 0x0C81 fila 1, columna 2
+C 0x0C85 17 letras a cero
+C 0x0C8B las vidas del jugador
+C 0x0C92 menos la que se juega
+C 0x0C94 la letra 0x64
+L 0x0C9A pinta_fase                STAGE y su numero (dos cifras, fila 1, columna 26)
+C 0x0C9A STAGE
+C 0x0CA0 la fase
+C 0x0CA8 la cifra baja
+C 0x0CAD como letra
+C 0x0CB1 la alta
+C 0x0CB5 fila 1, columna 26
+C 0x0CB8 dos cifras
+
+# ======================================================================
+# LAS FICHAS DE LOS JUGADORES
+# ======================================================================
+L 0x0CBE prepara_tablero_jugador   Los sprites (0x12EA) y el tablero que toca (0x11AB + 48 x n) del jugador en curso
+C 0x0CBE los cuatro sprites de salida
+C 0x0CC9 16 bytes
+C 0x0CCF el tablero que toca
+C 0x0CD6 los tableros, 48 bytes cada uno
+L 0x0CDD busca_tablero             48 bytes por tablero
+C 0x0CE1 al tablero del jugador
+C 0x0CEB el cuarto?...
+C 0x0CEF ...revuelto
+L 0x0CF2 prepara_trenes            Las cuatro fichas de reserva del jugador (0xE400 o 0xE480): la plantilla de 0x12B7 y su numero
+C 0x0CF2 la reserva del 1...
+C 0x0CF8 ...o la del 2
+C 0x0CFC cuatro
+L 0x0CFE copia_plantilla           Una ficha: los 32 bytes de la plantilla
+C 0x0D09 la segunda ficha (+1)
+C 0x0D0D los trenes negros 1-3
+L 0x0D0F numera_ficha              Sin pieza, sin casilla y su numero (+4)
+C 0x0D16 la ficha siguiente
+L 0x0D20 guarda_trenes             Las fichas en juego (0xE300) a la reserva del jugador A
+C 0x0D28 128 bytes
+L 0x0D2B copia_fichas              128 bytes
+L 0x0D31 saca_trenes               La reserva del jugador en curso a las fichas en juego (0xE300)
+L 0x0D3E anuncia_negro             Va a salir un tren negro: su sonido, la cuenta (21) y una estacion sin visitar al azar; las tres letras de la cuenta, junto a ella
+C 0x0D3E el sonido del aviso
+C 0x0D44 anunciado...
+C 0x0D49 ...el divisor, para la primera bajada...
+C 0x0D4B ...y la cuenta: 21
+C 0x0D4E la estacion
+C 0x0D53 sus casillas
+C 0x0D59 y su pieza
+C 0x0D5C la primera casilla en la VRAM
+C 0x0D60 el lado
+C 0x0D61 la de la derecha...
+C 0x0D65 ...ocho filas mas arriba
+C 0x0D66 el sitio de la primera cifra y el paso (0x1297)...
+C 0x0D6D ...segun el lado
+C 0x0D6F la primera cifra
+C 0x0D73 el paso: 1 (en fila) o 32 (en columna)
+C 0x0D76 la segunda
+C 0x0D7B la tercera
+C 0x0D80 para leer
+C 0x0D83 lo que habia en la primera
+C 0x0D86 se guarda, para borrar luego
+C 0x0D8B y el numero de la estacion
+L 0x0D8E cuenta_a_cero             La cuenta llega a cero: sale el tren negro; si no cabe, la estacion se cierra
+C 0x0D8E sale
+C 0x0D91 ha salido: se borra la cuenta
+C 0x0D93 no cabe: la estacion se cierra...
+C 0x0D99 ...y queda visitada...
+C 0x0DA0 ...una menos
+L 0x0DA8 borra_cuenta              Las tres letras de la cuenta, otra vez como estaban
+C 0x0DA8 lo que habia
+C 0x0DAC tres
+C 0x0DB3 para escribir
+L 0x0DBC espera_negro              La espera hasta el siguiente aviso: 3 a 6 casillas del tren blanco, al azar, y sin aviso
+C 0x0DBC la espera
+C 0x0DC3 de 3 a 6
+C 0x0DC7 sin aviso
+
+# ======================================================================
+# POR DONDE VA LA VIA
+# ======================================================================
+L 0x0DCA casilla_de_al_lado        La casilla de la ficha DE (+2) pasa a la de al lado en su direccion (+3): -8, +1, +8 o -1 (0x1293); B = la de antes
+C 0x0DCA el paso de cada direccion
+C 0x0DCD la direccion
+C 0x0DCF el paso
+C 0x0DD2 la casilla de antes
+C 0x0DD3 la nueva
+L 0x0DD6 entra_en_casilla          El tren entra en la casilla nueva: por donde entra, la pieza que hay, y por donde sale y con que guion (A); en las estaciones, el tren blanco las va pisando
+C 0x0DD7 la direccion...
+C 0x0DD8 ...dada la vuelta: el lado por el que entra
+L 0x0DDD mira_pieza                La pieza de la casilla y lo que hace con el tren
+C 0x0DDD la pieza (+1)
+C 0x0DE1 una estacion (0-7)?
+C 0x0DE5 la ficha: es el tren blanco (0xE302)?
+C 0x0DE8 los negros solo pasan
+C 0x0DEA una casilla de estacion pisada mas
+C 0x0DEF la pieza
+C 0x0DF1 a un lado
+C 0x0DF2 y la casilla...
+C 0x0DF5 ...a 0xE043 o 0xE044
+C 0x0DF7 de que estacion es
+C 0x0DFA la del tren negro anunciado?...
+C 0x0E00 ...ya no sale...
+C 0x0E03 ...y la cuenta que le quedaba, en puntos
+L 0x0E0A segunda_casilla           Las dos casillas pisadas: la estacion queda visitada, 90 puntos
+C 0x0E0B dos?
+C 0x0E11 la segunda casilla...
+C 0x0E14 ...su estacion...
+C 0x0E17 ...visitada
+C 0x0E18 la del tren negro anunciado?...
+C 0x0E1E ...se borra su cuenta
+C 0x0E21 90 puntos
+C 0x0E27 una estacion menos
+C 0x0E2D era la ultima: sin campanilla
+C 0x0E30 la campanilla del canal 1 (0x1849)
+L 0x0E37 pieza_otra_vez            La pieza, otra vez en A
+L 0x0E38 estacion_es_curva         Las piezas de estacion, como las del interior (0x12E2: 0x0C o 0x0D)
+L 0x0E3D pieza_a_grupo             El grupo de la pieza en la tabla de 0x12CE: 0 sin via (el hueco, 8-11), 4 la 0x0C, 8 la 0x0D, 12 el cruce (0x0E), 16 la recta (0x14)
+C 0x0E3D el hueco?
+C 0x0E41 las cruces de las estaciones cerradas (8-11)?
+C 0x0E45 la recta (0x14)...
+C 0x0E49 ...cuenta como la 0x0F: el grupo 16
+C 0x0E4B (la pieza & 3 + 1) x 4
+L 0x0E52 sin_via                   Sin via: el grupo 0
+L 0x0E53 salida                    La tabla de la pieza por el lado de entrada: nibble alto, la direccion nueva; bajo, el guion (0-15) que se devuelve en A
+C 0x0E53 la tabla
+C 0x0E57 el lado de entrada
+C 0x0E5A el byte
+C 0x0E5C a la direccion
+C 0x0E5E la direccion nueva arriba, el guion en A
+B 0x0E61 LA CASILLA SIGUIENTE (del 0xFF del guion; DE = la ficha + 6). Para el tren blanco, ademas: el mando de la demostracion, 10 puntos si no va dando vueltas, la espera del tren negro y el cierre de la estacion recien pisada.
+L 0x0E61 casilla_siguiente         El tren pasa a la casilla de al lado y toma su guion
+C 0x0E61 la ficha...
+C 0x0E62 ...+3
+C 0x0E65 el tren blanco (0xE303)?
+C 0x0E6A la demostracion: el siguiente movimiento de su mando...
+C 0x0E6F ...de la tira de 0x13E2
+C 0x0E77 que se mire si va dando vueltas
+C 0x0E7C dando vueltas...
+C 0x0E80 ...no puntua
+C 0x0E82 10 puntos por casilla
+C 0x0E87 casillas de estacion pisadas
+C 0x0E8B una: a medias, nada
+C 0x0E8F la espera del tren negro...
+C 0x0E93 ...si no hay aviso ya...
+C 0x0E96 ...una casilla menos, y a cero, el aviso
+C 0x0E9B dos?
+C 0x0E9E a cero
+C 0x0E9F recien salido de una estacion (0xE040)
+C 0x0EA3 la estacion se cierra
+L 0x0EAA a_la_casilla              Todos los trenes: a la casilla de al lado
+C 0x0EAA el tren blanco tiene que salir otra vez desde su casilla?
+C 0x0EB3 una vez
+C 0x0EB4 su sprite en el borde de la casilla
+C 0x0EB8 y la pieza de la misma casilla
+L 0x0EBD avanza                    A la casilla de al lado
+C 0x0EBD la casilla nueva
+C 0x0EC0 se esta deslizando una pieza?...
+C 0x0EC6 ...y es la casilla nueva?
+C 0x0ECC si: el tren se queda donde estaba...
+C 0x0ECD ...(la cuenta, +6)...
+C 0x0ECF ...y choca; el blanco, si no acaba de salir de una estacion...
+C 0x0ED6 ...sale otra vez desde su casilla
+L 0x0EDE choca_deslizando          Choca contra la pieza que se mueve
+L 0x0EE1 entra                     Entra en la casilla nueva
+L 0x0EE4 pon_guion                 El guion que toca (0x12FA + 4 x A), desde su primer byte, y a leerlo
+C 0x0EE5 4 bytes por guion
+C 0x0EED la n del codigo de la ficha (+11)...
+C 0x0EF0 ...a cero
+C 0x0EF5 el puntero al guion (+7, +8)
+C 0x0EF8 y a leer el primer byte
+L 0x0EFB choque                    El tren de la ficha HL (+6) choca: 3 cuadros de cuenta y el guion en su 0xFF; el blanco, ademas, la explosion
+C 0x0EFB ya no esta encima de la pieza que se mueve
+L 0x0EFD choque_sigue              La cuenta y el guion
+C 0x0EFD un paso
+C 0x0EFF la n (+11)...
+C 0x0F02 ...en el 0xFF del guion
+C 0x0F04 el tren blanco (0xE30B)?
+C 0x0F08 ha chocado
+C 0x0F0C el hueco del jugador...
+C 0x0F0F ...se guarda
+C 0x0F13 acababa de salir de una estacion?...
+C 0x0F18 ...saldra otra vez desde su casilla
+
+# ======================================================================
+# EL PSG, LA VRAM Y LAS ESPERAS
+# ======================================================================
+L 0x0F1F psg_inicial               Parejas registro-valor de 0x133A al PSG. Cada vuelta gasta 3 de B (las dos outi y el djnz): B = 0x0F son 5 parejas y 0x12 son 6
+L 0x0F23 pareja_psg                Una pareja
+C 0x0F23 el registro
+C 0x0F27 el valor
+C 0x0F2E en la demostracion...
+C 0x0F33 ...el mezclador, todo cerrado: sin sonido
+L 0x0F3E copia_en_vram                0x0FFF bytes de la VRAM, de DE a HL (con el bit de escritura): copia hacia delante, asi que se repite cada 2 KB
+L 0x0F41 byte_vram                 Un byte
+C 0x0F42 leer de DE
+C 0x0F44 el byte
+C 0x0F4A escribir en HL
+C 0x0F51 hasta que BC llega a cero
+L 0x0F57 espera_b                  Una espera: B x 256 vueltas
+L 0x0F59 espera_vuelta
+
+# ======================================================================
+# EL MANDO EMPUJA LAS PIEZAS
+# ======================================================================
+B 0x0F5F EL MANDO, cada cuadro (desde la interrupcion): una direccion nueva empuja hacia el hueco la pieza del lado contrario. Hay que soltar entre empujon y empujon; las piezas del marco (menos de 0x0C) no se mueven.
+L 0x0F5F mando_empuja              El mando: un empujon, o el deslizamiento en curso
+C 0x0F5F se esta deslizando una?
+C 0x0F64 si: el paso siguiente
+C 0x0F67 el mando
+C 0x0F6B con el teclado...
+C 0x0F6F ...los cursores
+C 0x0F72 en la demostracion...
+C 0x0F78 ...su mando...
+C 0x0F7C ...una vez
+L 0x0F7F mando_a_direccion         Los cuatro bits de direccion (a 1 lo pulsado) a la direccion del empujon (0x13D2): 0 nada, 1 arriba, 2 derecha, 3 abajo, 4 izquierda
+C 0x0F7F a 1 lo pulsado
+C 0x0F83 la direccion
+C 0x0F88 la de antes
+C 0x0F8C la nueva
+C 0x0F8E habia una: hay que soltar antes
+C 0x0F91 ninguna: nada
+C 0x0F93 cuatro pasos de 8 pixeles
+C 0x0F97 el hueco...
+C 0x0F9A ...en la VRAM
+C 0x0FA1 el empujon
+C 0x0FA6 desde el hueco, donde esta la pieza que entra (0x129D)
+C 0x0FAE en la VRAM
+C 0x0FB3 cuanto se mueve en cada paso (0x12A5): una letra o una fila
+C 0x0FBB 0xE032
+C 0x0FBF lo que se mueve el sprite de un tren encima (0x12AD)...
+C 0x0FC5 ...y su casilla al acabar
+C 0x0FCC 8 pixeles por paso
+C 0x0FD0 el hueco...
+C 0x0FD4 ...mas el desplazamiento: la casilla que entra
+C 0x0FD8 su pieza (0xE034)
+C 0x0FDB una del marco (menos de 0x0C): no se mueve
+C 0x0FDE se mueve
+C 0x0FE2 el canal 1 calla?...
+C 0x0FE8 ...el sonido del empujon (0x194D)
+L 0x0FEF desliza                   Un paso: el hueco y el sitio de la pieza, en negro (0x16B7); la pieza, 8 pixeles mas alla; y los trenes que van encima, con ella
+C 0x0FEF el hueco, en negro
+C 0x0FFB el sitio de la pieza...
+C 0x0FFF el sitio de la pieza, en negro tambien
+C 0x1002 los pasos que quedan...
+C 0x1006 ...cuantos lleva
+C 0x100A desde su sitio...
+C 0x100D ...un paso por cada uno
+L 0x1011 suma_paso
+C 0x1014 la pieza
+C 0x1018 a la VRAM
+C 0x101B las cuatro fichas
+L 0x1020 tren_encima               Si el tren de la ficha esta en la pieza, se mueve con ella
+C 0x1024 la ficha siguiente
+C 0x102A un paso menos
+C 0x102E aun no acaba
+C 0x1031 se acabo el deslizamiento
+C 0x1032 el tablero del jugador...
+C 0x103B ...el hueco...
+C 0x1042 ...recibe la pieza
+C 0x1046 la casilla de la que salio...
+C 0x1047 ...es el hueco nuevo
+C 0x104B la pieza 0x0F
+L 0x104E mueve_con_pieza           El tren de la ficha HL (+2) va encima de la pieza que se desliza: su sprite, 8 pixeles; al acabar, su casilla es la nueva
+C 0x104E la casilla de la pieza
+C 0x1051 no esta encima
+C 0x1056 la ficha (bits 5-6) x 4...
+C 0x105C ...su sprite
+C 0x1062 el del jugador 2
+C 0x1065 arriba o abajo: la Y; a los lados, la X
+C 0x106C 8 pixeles
+C 0x1071 a la VRAM
+C 0x1075 el numero de la ficha...
+C 0x107C ...encima de la pieza (0xE180)
+C 0x1082 el ultimo paso?
+C 0x1087 ya no esta encima...
+C 0x1089 ...y su casilla es la nueva
+L 0x108F cursores                  La fila 8 del teclado (cursores) al formato del mando: bit 0 arriba, 1 abajo, 2 izquierda, 3 derecha
+C 0x108F la fila 8
+C 0x1094 arriba (bit 5)...
+C 0x1097 abajo (bit 6)...
+C 0x109A la derecha (bit 7)...
+C 0x109E la izquierda (bit 4)...
+L 0x10A9 mira_disparo              El disparo (mando 1 o 2) o la barra o SELECT: acarreo si alguno, y en A la opcion del menu que repite lo de la vez anterior (1-2 con mando, 3-4 con teclado)
+C 0x10A9 el teclado, de momento
+C 0x10AD la fila 7: SELECT
+C 0x10B6 pulsado
+C 0x10B8 la fila 8: la barra
+C 0x10C1 pulsada
+C 0x10C3 el mando
+C 0x10C8 el puerto del mando 2
+C 0x10D1 el mando
+C 0x10D5 los dos botones
+C 0x10DB el puerto del mando 1
+C 0x10EC ninguno: sin acarreo
+L 0x10ED con_mando                 Con el mando: la opcion 1 o 2 (los jugadores de antes)
+L 0x10F4 con_teclado               Con el teclado: la opcion 3 o 4
+L 0x10FB opcion_tecla              La opcion como la leeria la fila 0: un bit a cero
+C 0x10FD acarreo: algo pulsado
+L 0x10FF espera                    A tramos de 32 cuadros hasta que la interrupcion la baja a cero
+L 0x1103 espera_vuelta32
+L 0x1108 lee_mando                 El registro 14 del PSG: el mando del puerto elegido (a cero lo pulsado)
+L 0x110F pinta_colores             Los colores de las letras: 24 letras de un color cada una (un byte) y 21 tiras de N bytes de un color (dos bytes), desde 0x0000
+C 0x110F la tabla de colores
+C 0x1112 45 tiras
+L 0x1114 tira_color                Una tira
+C 0x1116 las 24 primeras...
+C 0x1119 ...son de 8 bytes
+C 0x111D las demas, de N
+C 0x111F el color
+C 0x1122 a la VRAM
+C 0x1127 DE + N
+C 0x112B la siguiente
+L 0x112F colores_tres_tercios      La tabla de colores (0x0000) se copia sobre si misma hasta 0x17FF: los tres tercios iguales
+L 0x1139 lee_fila                  Una fila del teclado (A) por el PPI
+C 0x113B la fila...
+C 0x113D ...otra vez, para dar tiempo
+C 0x113F las teclas
+L 0x1142 pinta_menu                La pantalla en blanco y los cinco bloques del menu (0x14B3)
+L 0x114A bloque_menu
+L 0x1152 calla_canales             Los canales de musica, sin nota
+
+# ----------------------------------------------------------------------
+# Segunda pasada: los huecos que mide tools/densidad.py
+# ----------------------------------------------------------------------
+C 0x0056 estalla?
+C 0x005A su cuenta
+C 0x0063 estalla?
+C 0x0067 su cuenta
+C 0x0070 estalla?
+C 0x007A y el cuadro se acaba aqui
+C 0x0140 ...(dos vueltas mas o menos)
+C 0x0143 a +2
+C 0x0147 el alto
+C 0x0149 y el bajo
+C 0x0333 0x0C
+C 0x0340 a DE
+C 0x0347 a 0xE045 o 0xE046
+C 0x0355 una
+C 0x035D las primeras N...
+C 0x0366 seis bytes a cero
+C 0x0372 Y...
+C 0x0374 ...y X
+C 0x037B el sprite del jugador 2
+C 0x03DE el canal 1 calla?
+C 0x03EB y el del jugador 2
+C 0x04F2 el tren negro
+C 0x04F9 sin nada encima de la pieza que se desliza
+C 0x0500 al resto de la vuelta
+C 0x067E el 2
+C 0x0680 su casilla
+C 0x0683 en la estacion cerrada?
+C 0x068D el 3
+C 0x068F su casilla
+C 0x0692 en la estacion cerrada?
+C 0x075E el canal 2
+C 0x0764 el canal 3
+C 0x076B el canal 1 calla?
+C 0x0775 un jugador: se acabo
+C 0x077B le quedan vidas: le toca
+C 0x07AE las interrupciones, otra vez
+C 0x07AF el byte de detras
+C 0x0830 de la explosion (0xE06A) a "en marcha" (0xE067)
+C 0x0835 la ficha, por la direccion del sprite...
+C 0x083A ...+2: la casilla
+C 0x0841 y a la VRAM
+C 0x08A5 cuatro...
+C 0x08A8 ...por el numero del tren
+C 0x08B0 al sprite
+C 0x08E8 16 bytes
+C 0x08ED HL, como estaba
+C 0x08F7 el sprite siguiente de DE
+C 0x08FA en positivo
+C 0x0904 DE al sprite siguiente
+C 0x0907 HL a la Y otra vez
+C 0x0908 y el siguiente
+C 0x093A el tren B
+C 0x093E la casilla...
+C 0x0940 ...a cero
+C 0x0942 el anterior
+C 0x0949 o los del jugador 2
+C 0x0950 Y fuera
+C 0x0954 el siguiente
+C 0x0957 a la VRAM
+C 0x09BC 32 bytes...
+C 0x09BF ...por cada ficha
+C 0x09C2 0xFF: ninguna pieza
+C 0x09E5 la siguiente de la lista
+C 0x09EB menos de 12: vale
+C 0x09EE la decena de la direccion...
+C 0x09F2 ...y vuelta al principio
+C 0x09F3 sin visitar?
+C 0x09F5 visitada: otra
+C 0x09F9 su sitio en la lista...
+C 0x09FB ...es su numero
+C 0x0A54 la casilla
+C 0x0A5E la lista de ese tablero
+C 0x0A65 la casilla que se busca
+C 0x0A66 es esta?
+C 0x0A68 no: la siguiente
+C 0x0A6B el principio de la lista
+C 0x0A6D el sitio en la lista
+C 0x0AC2 en la demostracion no se puntua
+C 0x0AD1 en BCD
+C 0x0AD3 sin acarreo, ya esta
+C 0x0AD6 uno mas
+C 0x0ADA sin acarreo, ya esta
+C 0x0B29 16 x...
+C 0x0B2B ...el doble de la columna
+C 0x0B30 la ficha: 0xE300, 0xE320, ...
+C 0x0B35 ...0x80, 0x84, 0x88, 0x8C: su sprite
+C 0x0B38 el jugador 2...
+C 0x0B3B ...16 mas alla
+C 0x0B46 cuatro letras
+C 0x0B49 a la VRAM
+C 0x0B4C DE + 32
+C 0x0B53 0x3B00?
+C 0x0B55 fuera de la tabla: se acaba
+C 0x0B58 la fila siguiente
+C 0x0BCC el siguiente sitio
+C 0x0BCD las B
+C 0x0BE8 L ceros
+C 0x0BEC dos veces
+C 0x0BEF las interrupciones, otra vez
+C 0x0C04 en la fila 0, columna 5
+C 0x0C0C columna 14
+C 0x0C5B el byte, a 0xE218
+C 0x0C60 la cifra baja a A
+C 0x0C64 a su sitio
+C 0x0C67 como letra
+C 0x0C69 a su sitio
+C 0x0C6C el byte siguiente (C)
+C 0x0C84 se guarda
+C 0x0C87 cero
+C 0x0C89 a la VRAM
+C 0x0C91 la direccion
+C 0x0C93 era la ultima: ninguna
+C 0x0C97 una por vida
+C 0x0CCA 16 bytes
+C 0x0CDA uno mas: el primero se salta la tabla de 0x117B
+C 0x0CDB 48 bytes por tablero
+C 0x0CDD 48...
+C 0x0CDF ...por cada uno
+C 0x0CE7 o 0xE130
+C 0x0CE9 los 48 bytes (BC sigue siendo 48)
+C 0x0CFE la plantilla
+C 0x0D01 32 bytes
+C 0x0D06 la siguiente
+C 0x0D0F sin pieza (+1)...
+C 0x0D12 ...sin casilla (+2)...
+C 0x0D15 ...y su numero (+4)
+C 0x0D18 la ficha siguiente (+1)
+C 0x0D19 el numero siguiente
+C 0x0D1C hasta la 3
+C 0x0DAE la direccion de la cifra...
+C 0x0DB1 ...en DE
+C 0x0DB6 lo que habia
+C 0x0DB7 a la VRAM
+C 0x0DBA la siguiente
+C 0x0EE7 los guiones
+C 0x0EEB DE = el guion
+C 0x0EF2 de +11 a +8
+C 0x0EF7 el bajo (+7)
+C 0x0F25 a 0xA0
+C 0x0F29 a 0xA1
+C 0x0F2B la siguiente
+C 0x0F34 el registro 7...
+C 0x0F38 ...0xFF
+C 0x0F41 DE para leer
+C 0x0F43 el byte siguiente
+C 0x0F46 un respiro para la interrupcion
+C 0x0F47 HL a DE
+C 0x0F4B el byte siguiente
+C 0x0F4D se escribe
+C 0x0F50 y otra vez como estaban
+C 0x0F52 BC a cero?
+C 0x106F 8 pixeles mas (o menos)
+C 0x1074 la ficha
+C 0x1076 la ficha / 32: su numero
+C 0x1080 encima
+C 0x1085 el ultimo paso?
+C 0x1088 ya no esta encima
+C 0x108C la casilla, la de al lado
+C 0x10A3 la izquierda (bit 4)...
+C 0x10A7 al formato del mando
+
+# ======================================================================
+# LOS DATOS
+# ======================================================================
+# Las piezas (el byte de cada casilla del tablero):
+#   0x00-0x07 las estaciones del marco, dos casillas por estacion: 0/1
+#     arriba, 2/3 a la derecha, 4/5 abajo, 6/7 a la izquierda
+#   0x08-0x0B el marco sin estacion (la cruz amarilla): las estaciones
+#     cerradas pasan a ser una de estas (0x0A14)
+#   0x0C y 0x0D las dos piezas de curvas dobles, 0x0E el cruce,
+#   0x0F el hueco (y lo de fuera del tablero), 0x10-0x13 las cuatro
+#   esquinas, 0x14 la recta (solo en los tableros revueltos)
+D 0x115F 0x1167 listas_de_estaciones  las casillas de las estaciones de cada tablero (0x1167, 0x1173, 0x1183, 0x1193); las lee 0x09C5 y 0x0A54
+F 0x115F w4
+D 0x1167 0x1173 estaciones_tablero1  6 estaciones, dos casillas cada una (fila x 8 + columna): la de arriba, dos a la derecha, la de abajo y dos a la izquierda
+F 0x1167 2
+D 0x1173 0x1183 estaciones_tablero2  8 estaciones
+F 0x1173 2
+D 0x1183 0x1193 estaciones_tablero3  8 estaciones
+F 0x1183 2
+D 0x1193 0x11A7 estaciones_tablero4  10 estaciones
+F 0x1193 2
+D 0x11A7 0x11AB cuantas_estaciones  6, 8, 8 y 10: las que hay que visitar en cada tablero (0x0341)
+D 0x11AB 0x11DB tablero1  8 x 6 casillas: el interior de 3 x 4 piezas, el hueco en la casilla 12 y el marco con sus estaciones; fuera, la 0x0F
+F 0x11AB 8
+D 0x11DB 0x120B tablero2  el interior de 4 x 4
+F 0x11DB 8
+D 0x120B 0x123B tablero3  el interior de 5 x 4, con una recta (0x14) en la casilla 19
+F 0x120B 8
+D 0x123B 0x126B tablero4  el interior de 6 x 4 y el marco entero; desde aqui, el interior lo revuelve 0x0B5A
+F 0x123B 8
+D 0x126B 0x127E tira_revuelta  18 piezas (0x0C, 0x0D, 0x0E) y un cero: el interior del cuarto tablero sale de aqui, desde un sitio que depende de la fase (0x0B5A)
+D 0x127E 0x1293 sitios_de_rectas  las casillas que pasan a ser rectas en los tableros revueltos, de 6 a 8 desde un sitio que depende de la fase (0x0BC0)
+D 0x1293 0x1297 paso_por_direccion  lo que cambia la casilla en cada direccion: -8 arriba, +1 derecha, +8 abajo, -1 izquierda (0x0DCA)
+D 0x1297 0x129F cifras_por_lado  la cuenta del tren negro: donde va su primera cifra respecto a la estacion y el paso entre cifras (1 en fila, 32 en columna), por lado (0x0D66)
+F 0x1297 2
+D 0x129F 0x12A7 empujon_desde  para cada empujon (1 arriba, 2 derecha, 3 abajo, 4 izquierda), donde esta la pieza que entra respecto al hueco en la tabla de nombres: +128, -4, -128, +4 (0x0FA6; la entrada 0 no se usa y cae en la tabla anterior)
+F 0x129F w
+D 0x12A7 0x12AF empujon_paso  cuanto se mueve la pieza en cada uno de sus cuatro pasos: una fila arriba, una letra a la derecha, una fila abajo, una letra a la izquierda (0x0FB3)
+F 0x12A7 w
+D 0x12AF 0x12B7 empujon_trenes  por empujon: lo que cambia la casilla de un tren que va encima de la pieza y lo que se mueve su sprite en cada paso (8 pixeles) (0x0FBF)
+F 0x12AF 2
+D 0x12B7 0x12CE plantilla_de_ficha  los 32 bytes de la ficha de un tren (0x0CFE); sus 9 ultimos son los 9 primeros de la tabla de salidas. +1 la pieza, +2 la casilla, +3 la direccion, +4 el numero, +5 la direccion del sprite, +6 la cuenta, +7/+8 el guion (0x12FA) y desde +9 el codigo que lee el guion: ld b,(ix+n) / inc hl / inc hl / inc (hl) / ld a,l / sub 5 / ld l,a / ld a,b / jp 0x0850. El tren blanco sale de la casilla 28, sobre un cruce, hacia arriba
+F 0x12B7 1,1,1,1,1,1,1,2,3,1,1,1,1,2,1,1,3
+D 0x12CE 0x12E2 salidas  por pieza (sin via, 0x0C, 0x0D, el cruce y la recta) y por el lado por el que entra el tren, un byte: la direccion en la que sale (nibble alto) y su guion (bajo); los guiones 12-15 son los callejones (0x0E53)
+F 0x12CE 4
+D 0x12E2 0x12EA estaciones_como_piezas  las piezas de estacion 0-7, para la via, son la 0x0C o la 0x0D (0x0E38)
+D 0x12EA 0x12FA sprites_de_salida  los cuatro sprites al empezar: el tren blanco en Y 0x7F, X 0x88, patron 0, blanco; los otros tres, fuera (Y 0xD1), patron 0x20 y negros (0x0CBE)
+F 0x12EA 4
+D 0x12FA 0x133A guiones  los 16 guiones de 4 bytes ("veces x 16 + direccion del sprite", 0xFF el final): 0-3 las rectas (32 pixeles), 4-11 las curvas (5 + 11 diagonales + 5), 12-15 los callejones (0x10)
+F 0x12FA 4
+D 0x133A 0x1346 parejas_psg  registro y valor: el mezclador, el ruido, los tres volumenes a cero y el mezclador con el ruido; 0x0F1F manda 5 o 6
+F 0x133A 2
+D 0x1346 0x134E registros_vdp  los ocho registros: SCREEN 2, sprites de 16 x 16, nombres en 0x3800, colores en 0x0000, patrones en 0x2000, atributos en 0x3B00, patrones de sprites en 0x1800 y el fondo negro (0x0192)
+D 0x134E 0x1390 colores_con_piezas  los colores de las letras (0x110F): 24 letras de un color cada una y 21 tiras de "cuantos bytes, color"
+F 0x134E 24,2
+D 0x1390 0x13D2 colores_sin_piezas  los mismos, salvo el fondo de las piezas: lo que se pone a los 32 segundos de fase (0x048D)
+F 0x1390 24,2
+D 0x13D2 0x13E2 mando_a_empujon  los cuatro bits de direccion del mando (a 1 lo pulsado) al empujon: 0 nada, 1 arriba, 2 derecha, 3 abajo, 4 izquierda (0x0F83)
+D 0x13E2 0x13F2 mando_de_la_demostracion  un movimiento del mando por cada casilla que entra el tren blanco (a 0 lo pulsado: 0xFE arriba, 0xFD abajo, 0xFB izquierda, 0xF7 derecha) (0x0E6F)
+D 0x13F2 0x14B3 texto_titulo  SONY, el logotipo de HIT BIT, CRAZY TRAIN y (c) Konami 1983 (los bloques de 0x0792)
+D 0x14B3 0x14DF texto_menu  CRAZY TRAIN, (c) Konami 1983 y HIGH-SCORE
+D 0x14DF 0x1500 texto_opcion1  "1" KEY 1 PLAYER  W/ JOYSTICK
+D 0x1500 0x1521 texto_opcion2  "2" KEY 2 PLAYERS W/ JOYSTICK
+D 0x1521 0x1542 texto_opcion3  "3" KEY 1 PLAYER  W/ KEYBOARD
+D 0x1542 0x1563 texto_opcion4  "4" KEY 2 PLAYERS W/ KEYBOARD
+D 0x1563 0x1583 texto_cabecera  1P-00000 2P-00000 HIGH-00000; 0x07C5 toma de aqui los rotulos 1P- (0x1565) y 2P- (0x156E)
+D 0x1583 0x15A0 texto_game_over  GAME OVER entre dos filas en blanco
+D 0x15A0 0x15B2 texto_player1  PLAYER 1
+D 0x15B2 0x15BE texto_player2  PLAYER 2
+D 0x15BE 0x15C7 texto_stage  STAGE
+D 0x15C7 0x1717 piezas  las 21 piezas (0x00-0x14), cada una 4 x 4 letras (0x0A7D)
+F 0x15C7 4
+D 0x1717 0x174B musica_salida_1  la musica de salida, canal 1: 17 notas (tres bytes: tono, tono alto con la duracion, volumen; 0xFF el final)
+F 0x1717 3
+D 0x174B 0x17AC musica_salida_2  canal 2: 32 notas
+F 0x174B 3
+D 0x17AC 0x17D1 musica_salida_3  canal 3: 12 notas
+F 0x17AC 3
+D 0x17D1 0x1802 musica_fase_1  la de la fase superada, canal 1: 16 notas
+F 0x17D1 3
+D 0x1802 0x1833 musica_fase_2  canal 2: 16 notas
+F 0x1802 3
+D 0x1833 0x1849 musica_fase_3  canal 3: 7 notas
+F 0x1833 3
+D 0x1849 0x1899 campanilla  canal 1: 26 notas, al arrancar la fase y al visitar cada estacion
+F 0x1849 3
+D 0x1899 0x18A6 traqueteo  canal 3: 4 notas, una y otra vez
+F 0x1899 3
+D 0x18A6 0x18B3 traqueteo_rapido  canal 3: 4 notas, con el tren a tope
+F 0x18A6 3
+D 0x18B3 0x18C6 choque  canales 2 y 3: 6 notas
+F 0x18B3 3
+D 0x18C6 0x18FD musica_final_1  GAME OVER, canal 1: 18 notas
+F 0x18C6 3
+D 0x18FD 0x1925 musica_final_2  canal 2: 13 notas
+F 0x18FD 3
+D 0x1925 0x194D musica_final_3  canal 3: 13 notas
+F 0x1925 3
+D 0x194D 0x1954 empujon  canal 1: 2 notas, al empujar una pieza
+F 0x194D 3
+D 0x1954 0x1967 aviso  canal 1: 6 notas, al anunciar un tren negro
+F 0x1954 3
+D 0x1967 0x197F letras_9_a_23  tres dibujos de 8 bytes, cada uno en cinco letras seguidas (0x019F)
+F 0x1967 8
+D 0x197F 0x1D17 letras_18_a_8A  las vias, el marco, las estaciones, el logotipo y el tren pequeno de las vidas: 115 letras de 8 bytes
+F 0x197F 8
+D 0x1D17 0x1DCF fuente_menu  23 letras que se cargan cuatro veces (0x8B, 0xA2, 0xB9 y 0xD0), cada copia con su color: las del menu, PLAYER, STAGE y las cifras 0-4
+F 0x1D17 8
+D 0x1DCF 0x1E7F fuente_resto  22 letras mas, detras de la cuarta copia (desde 0xE7): las cifras 5-9 y el resto
+F 0x1DCF 8
+D 0x1E7F 0x1FFF sprites  12 patrones de 16 x 16: el tren blanco en sus 8 direcciones (0x00-0x1C) y el negro en 4 (0x20-0x2C)
+F 0x1E7F 32
+D 0x1FFF 0x2000 relleno_1FFF  0xFF, el ultimo byte de los 8 KB
