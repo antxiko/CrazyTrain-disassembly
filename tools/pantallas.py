@@ -4,7 +4,7 @@
   - el titulo: INIT (0x0160) hasta la espera de nueve tramos (0x0211), con
     SONY, el logotipo de HIT BIT, CRAZY TRAIN y (c) Konami 1983 ya pintados;
   - el menu: desde 0x021C hasta que empieza a mirar las teclas (0x0231).
-logotipo.png, la cabecera de la web, es el titulo de SONY a CRAZY TRAIN.
+logotipo.png, la cabecera de la web: CRAZY TRAIN y (c) Konami 1983 del titulo.
 Los registros, los de 0x1346. Cada una se coteja con la VRAM de openMSX del
 cuadro que se diga: la imagen entera, punto a punto.
 
@@ -38,8 +38,9 @@ def main(argv):
     menu = bytes(z.vdp.vram)
     for nom, v in (("titulo", titulo), ("menu", menu)):
         vdp.imagen(v, regs, 2).save(os.path.join(argv[0], "%s.png" % nom))
-    # el logotipo de la cabecera de la web: el titulo, de SONY a CRAZY TRAIN
-    vdp.imagen(titulo, regs, 2).crop((0, 24, 512, 304)).save(
+    # el logotipo de la cabecera de la web: el nombre del juego y (c) Konami
+    # 1983 (filas 17 a 20 del titulo); SONY y HIT BIT son de la gama, no del juego
+    vdp.imagen(titulo, regs, 2).crop((128, 272, 384, 336)).save(
         os.path.join(argv[0], "logotipo.png"))
     if len(argv) > 1:
         cs = list(vdp.cuadros(argv[1]))
